@@ -18,6 +18,29 @@ enum Register
 	R_A = 7
 };
 
+enum Flag
+{
+	F_C = 0,
+	F_N = 1,
+	F_P = 2,
+	F_V = 2,
+	F_3 = 3,
+	F_H = 4,
+	F_5 = 5,
+	F_Z = 6,
+	F_S = 7,
+
+	M_C = 1 << F_C,
+	M_N = 1 << F_N,
+	M_P = 1 << F_P,
+	M_V = 1 << F_V,
+	M_3 = 1 << F_3,
+	M_H = 1 << F_H,
+	M_5 = 1 << F_5,
+	M_Z = 1 << F_Z,
+	M_S = 1 << F_S,
+};
+
 struct Registers
 {
 	// 8-bit
@@ -51,6 +74,9 @@ struct ZState
 #define MEM_PRINT printf
 #define REG_PRINT printf
 
+
+
+/* UTILITY */
 uint8_t ReadByte( ZState *Z, uint16_t address )
 {
 	uint8_t value = Z->mem[address];
@@ -99,6 +125,7 @@ void WriteHL( ZState *Z, uint8_t v )
 }
 
 
+/* Opcode Functions */
 void PortOut( ZState *Z )
 {
 	uint8_t port = ReadPC( Z );
@@ -112,11 +139,59 @@ void PortIn( ZState *Z )
 	ASM_PRINT( "IN: (%02x) -> %02x\n", port, Z->reg.A );
 }
 
+void SetParity( ZState *Z, uint8_t v )
+{
+	v ^= v >> 4;
+	int parity = ( 0x6996 >> v ) & 1;
+	Z->reg.F &= ~M_P;
+	Z->reg.F |= parity << F_P;
+}
+
+void SetZero( ZState *Z, uint8_t v )
+{
+	if( v == 0 )
+	{
+		Z->reg.F |= M_Z;
+	}
+	else
+	{
+		Z->reg.F &= ~M_Z;
+	}
+}
+
+void SetSign( ZState *Z, uint8_t v )
+{
+	Z->reg.F &= ~M_S;
+	Z->reg.F |= v & M_S;
+}
+
+void SetZeroSignParity( ZState *Z, uint8_t v )
+{
+	Z->reg.F &= ~(M_S | M_Z | M_P);
+
+	if( v == 0 )
+		Z->reg.F |= M_Z;
+
+	Z->reg.F |= v & M_S;
+
+	v ^= v >> 4;
+	Z->reg.F |= ( ( 0x6996 >> v ) << F_P ) & M_P;
+}
 
 void Xor( ZState *Z, uint8_t v )
 {
 	Z->reg.A ^= v;
+	Z->reg.F &= ~( M_C | M_N | M_H ); // reset C, H, N
+	SetZeroSignParity( Z, Z->reg.A );
 }
+
+void And( ZState *Z, uint8_t v )
+{
+	Z->reg.A &= v;
+	Z->reg.F &= ~( M_C | M_N | M_H ); // reset C, H, N
+	SetZeroSignParity( Z, Z->reg.A );
+}
+
 
 void Jump( ZState *Z, uint8_t cond )
 {
@@ -125,6 +200,35 @@ void Jump( ZState *Z, uint8_t cond )
 	{
 		Z->reg.PC = addr;
 	}
+}
+
+void JumpRelative( ZState *Z, uint8_t cond )
+{
+	int8_t addr = (int8_t)ReadPC( Z );
+	if( cond != 0 )
+	{
+		Z->reg.PC = Z->reg.PC + addr;
+	}
+}
+
+
+void Cp( ZState *Z, uint8_t v )
+{
+	uint8_t flag = v & ( M_3 | M_5 );
+
+	const uint16_t r16 = (uint16_t)Z->reg.A - (uint16_t)v;
+	const uint8_t r8 = (uint8_t)r16;
+
+	flag |= M_N;
+	flag |= r8 & M_S;
+
+	if( r8 == 0 )
+		flag |= M_Z;
+
+	if( r16 & 0x100 )
+		flag |= M_C;
+
+	Z->reg.F = flag;
 }
 
 void ExecED( ZState *Z )
@@ -156,6 +260,7 @@ void Exec( ZState *Z )
 	switch( op )
 	{
 		case NOP: break;
+		case DI: printf( "DI NOT IMPLEMENTED!\n" ); break;
 		case XOR_B: Xor( Z, Z->reg.B ); break;
 		case XOR_C: Xor( Z, Z->reg.C ); break;
 		case XOR_D: Xor( Z, Z->reg.D ); break;
@@ -164,6 +269,16 @@ void Exec( ZState *Z )
 		case XOR_L: Xor( Z, Z->reg.L ); break;
 		case XOR_RHL: Xor( Z, ReadHL( Z ) ); break;
 		case XOR_A: Xor( Z, Z->reg.A ); break;
+
+		case AND_B: And( Z, Z->reg.B ); break;
+		case AND_C: And( Z, Z->reg.C ); break;
+		case AND_D: And( Z, Z->reg.D ); break;
+		case AND_E: And( Z, Z->reg.E ); break;
+		case AND_H: And( Z, Z->reg.H ); break;
+		case AND_L: And( Z, Z->reg.L ); break;
+		case AND_RHL: And( Z, ReadHL( Z ) ); break;
+		case AND_A: And( Z, Z->reg.A ); break;
+
 
 		case DEC_HL: SetHL( Z, GetHL( Z ) - 1 ); break;
 
@@ -236,13 +351,30 @@ void Exec( ZState *Z )
 		case OUT_RN_A: PortOut( Z ); break;
 		case IN_A_RN: PortIn( Z ); break;
 
+		case CP_A: Cp( Z, Z->reg.A ); break;
+		case CP_B: Cp( Z, Z->reg.B ); break;
+		case CP_C: Cp( Z, Z->reg.C ); break;
+		case CP_D: Cp( Z, Z->reg.D ); break;
+		case CP_E: Cp( Z, Z->reg.E ); break;
+		case CP_H: Cp( Z, Z->reg.H ); break;
+		case CP_L: Cp( Z, Z->reg.L ); break;
 
 		case JP_NN: Jump( Z, 1 ); break;
+		case JP_NZ_NN: Jump( Z, (~Z->reg.F) & M_Z ); break;
+		case JP_Z_NN: Jump( Z, Z->reg.F & M_Z ); break;
+		case JP_NC_NN: Jump( Z, (~Z->reg.F) & M_C ); break;
+		case JP_C_NN: Jump( Z, Z->reg.F & M_C ); break;
 
+		case JR_N: JumpRelative( Z, 1 ); break;
+		case JR_NZ_N: JumpRelative( Z, (~Z->reg.F) & M_Z ); break;
+		case JR_Z_N: JumpRelative( Z, Z->reg.F & M_Z ); break;
+		case JR_NC_N: JumpRelative( Z, (~Z->reg.F) & M_C ); break;
+		case JR_C_N: JumpRelative( Z, Z->reg.F & M_C ); break;
 
 		case PREFIX_ED: ExecED( Z ); break;
 		default:
 			printf( "Unimplemented opcode 0x%02x: %s\n", op, g_basicNames[op] );
+			abort();
 			break;
 	}
 }
@@ -267,7 +399,7 @@ int main( int argc, char *argv[] )
 	ZState Z;
 	Init( &Z );
 
-	for( int i = 0; i < 32; i ++ )
+	for( int i = 0; i < 3200000; i ++ )
 	{
 		Exec( &Z );
 	}
