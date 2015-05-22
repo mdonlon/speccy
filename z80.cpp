@@ -1,74 +1,5 @@
-#include <stdlib.h>
-#include <stdio.h>
-#include <string.h>
-
+#include "z80.h"
 #include "opcodes.h"
-
-#define RAM_MASK ((uint16_t)~0x3fff)
-
-enum Register
-{
-	R_B = 0,
-	R_C = 1,
-	R_D = 2,
-	R_E = 3,
-	R_H = 4,
-	R_L = 5,
-	R_HL_SPECIAL = 6,
-	R_A = 7
-};
-
-enum Flag
-{
-	F_C = 0,
-	F_N = 1,
-	F_P = 2,
-	F_V = 2,
-	F_3 = 3,
-	F_H = 4,
-	F_5 = 5,
-	F_Z = 6,
-	F_S = 7,
-
-	M_C = 1 << F_C,
-	M_N = 1 << F_N,
-	M_P = 1 << F_P,
-	M_V = 1 << F_V,
-	M_3 = 1 << F_3,
-	M_H = 1 << F_H,
-	M_5 = 1 << F_5,
-	M_Z = 1 << F_Z,
-	M_S = 1 << F_S,
-};
-
-struct Registers
-{
-	// 8-bit
-	uint8_t B;
-	uint8_t C;
-	uint8_t D;
-	uint8_t E;
-	uint8_t H;
-	uint8_t L;
-	uint8_t A;
-
-	uint8_t F;
-	uint8_t I;
-	uint8_t R;
-
-	// 16-bit
-	uint16_t IX;
-	uint16_t IY;
-	uint16_t PC;
-	uint16_t SP;
-};
-
-
-struct ZState
-{
-	uint8_t mem[64 * 1024];
-	Registers reg;
-};
 
 #define ASM_PRINT printf
 #define MEM_PRINT printf
@@ -142,7 +73,8 @@ void PortIn( ZState *Z )
 void SetParity( ZState *Z, uint8_t v )
 {
 	v ^= v >> 4;
-	int parity = ( 0x6996 >> v ) & 1;
+	v &= 0xf;
+	uint8_t parity = ( ~0x6996 >> v ) & 1;
 	Z->reg.F &= ~M_P;
 	Z->reg.F |= parity << F_P;
 }
@@ -175,7 +107,8 @@ void SetZeroSignParity( ZState *Z, uint8_t v )
 	Z->reg.F |= v & M_S;
 
 	v ^= v >> 4;
-	Z->reg.F |= ( ( 0x6996 >> v ) << F_P ) & M_P;
+	v &= 0xf;
+	Z->reg.F |= ( ( ~0x6996 >> v ) << F_P ) & M_P;
 }
 
 void Xor( ZState *Z, uint8_t v )
@@ -242,6 +175,7 @@ void ExecED( ZState *Z )
 		case LD_I_A: Z->reg.I = Z->reg.A; break;
 		default:
 			printf( "Unimplemented ED opcode 0x%02x: %s\n", op, g_edNames[op] );
+			Z->halted = true;
 			break;
 	}
 }
@@ -260,6 +194,7 @@ void Exec( ZState *Z )
 	switch( op )
 	{
 		case NOP: break;
+		case HALT: Z->halted = true; break;
 		case DI: printf( "DI NOT IMPLEMENTED!\n" ); break;
 		case XOR_B: Xor( Z, Z->reg.B ); break;
 		case XOR_C: Xor( Z, Z->reg.C ); break;
@@ -269,6 +204,7 @@ void Exec( ZState *Z )
 		case XOR_L: Xor( Z, Z->reg.L ); break;
 		case XOR_RHL: Xor( Z, ReadHL( Z ) ); break;
 		case XOR_A: Xor( Z, Z->reg.A ); break;
+		case XOR_N: Xor( Z, ReadPC( Z ) ); break;
 
 		case AND_B: And( Z, Z->reg.B ); break;
 		case AND_C: And( Z, Z->reg.C ); break;
@@ -278,6 +214,7 @@ void Exec( ZState *Z )
 		case AND_L: And( Z, Z->reg.L ); break;
 		case AND_RHL: And( Z, ReadHL( Z ) ); break;
 		case AND_A: And( Z, Z->reg.A ); break;
+		case AND_N: And( Z, ReadPC( Z ) ); break;
 
 
 		case DEC_HL: SetHL( Z, GetHL( Z ) - 1 ); break;
@@ -374,14 +311,20 @@ void Exec( ZState *Z )
 		case PREFIX_ED: ExecED( Z ); break;
 		default:
 			printf( "Unimplemented opcode 0x%02x: %s\n", op, g_basicNames[op] );
-			abort();
+			Z->halted = true;
 			break;
 	}
 }
 
-void Init( ZState *Z )
+void Z80_Reset( ZState *Z )
 {
 	memset( Z, 0, sizeof( ZState ) );
+}
+
+void Z80_InitSpectrum( ZState *Z )
+{
+	Z80_Reset( Z );
+
 	FILE *fp = fopen( "roms/48.rom", "rb" );
 	if( fp == NULL )
 	{
@@ -393,16 +336,24 @@ void Init( ZState *Z )
 	fclose( fp );
 }
 
+void Z80_Run( ZState *Z, int cycles )
+{
+	int cycleCount = 0;
+	while( !Z->halted && ( cycles < 0 || cycles > cycleCount ) )
+	{
+		Exec( Z );
+		cycleCount++;
+	}
+}
+
+extern void ParityTest();
 
 int main( int argc, char *argv[] )
 {
 	ZState Z;
-	Init( &Z );
+	Z80_InitSpectrum( &Z );
 
-	for( int i = 0; i < 3200000; i ++ )
-	{
-		Exec( &Z );
-	}
+	Z80_Run( &Z, -1 );
 
 	return 0;
 }
