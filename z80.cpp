@@ -1,3 +1,5 @@
+#include <assert.h>
+
 #include "z80.h"
 #include "opcodes.h"
 
@@ -8,7 +10,23 @@
 
 
 /* UTILITY */
-uint8_t ReadByte( ZState *Z, uint16_t address )
+const char *FlagString( uint8_t f )
+{
+	static char str[9];
+	str[0] = f & M_C ? 'C' : '-';
+	str[1] = f & M_N ? 'B' : '-';
+	str[2] = f & M_V ? 'V' : '-';
+	str[3] = f & M_3 ? '3' : '-';
+	str[4] = f & M_H ? 'H' : '-';
+	str[5] = f & M_5 ? '5' : '-';
+	str[6] = f & M_Z ? 'Z' : '-';
+	str[7] = f & M_S ? 'S' : '-';
+	str[8] = 0;
+
+	return str;
+}
+
+uint8_t Read8( ZState *Z, uint16_t address )
 {
 	uint8_t value = Z->mem[address];
 
@@ -17,7 +35,7 @@ uint8_t ReadByte( ZState *Z, uint16_t address )
 	return value;
 }
 
-void WriteByte( ZState *Z, uint16_t address, uint8_t value )
+void Write8( ZState *Z, uint16_t address, uint8_t value )
 {
 	MEM_PRINT( "Write 0x%04x <- 0x%02x\n", address, value );
 
@@ -25,47 +43,55 @@ void WriteByte( ZState *Z, uint16_t address, uint8_t value )
 		Z->mem[address] = value;
 }
 
-uint16_t GetHL( ZState *Z )
+uint16_t Read16( ZState *Z, uint16_t address )
 {
-	return Z->reg.H << 8 | Z->reg.L;
+	uint16_t value = Read8( Z, address ) | ( Read8( Z, address + 1 ) << 8 );
+	return value;
 }
 
-void SetHL( ZState *Z, uint16_t v )
+void Write16( ZState *Z, uint16_t address, uint16_t value )
 {
-	Z->reg.H = (uint8_t)( v >> 8 );
-	Z->reg.L = (uint8_t)v;
+	Write8( Z, address, value & 0xff );
+	Write8( Z, address + 1, value >> 8 );
 }
 
-uint8_t ReadPC( ZState *Z )
+
+uint8_t ReadPC8( ZState *Z )
 {
 	uint8_t value = Z->mem[Z->reg.PC];
 	Z->reg.PC++;
 	return value;
 }
 
+uint8_t ReadPC16( ZState *Z )
+{
+	uint16_t value = Z->mem[Z->reg.PC] | ( Z->mem[Z->reg.PC + 1] << 8 );
+	Z->reg.PC += 2;
+	return value;
+}
+
+
 uint8_t ReadHL( ZState *Z )
 {
-	uint16_t addr = GetHL( Z );
-	return ReadByte( Z, addr );
+	return Read8( Z, Z->reg.HL );
 }
 
 void WriteHL( ZState *Z, uint8_t v )
 {
-	uint16_t addr = GetHL( Z );
-	return WriteByte( Z, addr, v );
+	return Write8( Z, Z->reg.HL, v );
 }
 
 
 /* Opcode Functions */
 void PortOut( ZState *Z )
 {
-	uint8_t port = ReadPC( Z );
+	uint8_t port = ReadPC8( Z );
 	ASM_PRINT( "OUT: (%02x) <- %02x\n", port, Z->reg.A );
 }
 
 void PortIn( ZState *Z )
 {
-	uint8_t port = ReadPC( Z );
+	uint8_t port = ReadPC8( Z );
 	Z->reg.A = 0x00;
 	ASM_PRINT( "IN: (%02x) -> %02x\n", port, Z->reg.A );
 }
@@ -221,7 +247,7 @@ void SbcHL( ZState *Z, uint8_t high, uint8_t low )
 
 void Jump( ZState *Z, uint8_t cond )
 {
-	uint16_t addr = ReadPC( Z ) | ( ReadPC( Z ) << 8 );
+	uint16_t addr = ReadPC8( Z ) | ( ReadPC8( Z ) << 8 );
 	if( cond != 0 )
 	{
 		Z->reg.PC = addr;
@@ -230,7 +256,7 @@ void Jump( ZState *Z, uint8_t cond )
 
 void JumpRelative( ZState *Z, uint8_t cond )
 {
-	int8_t addr = (int8_t)ReadPC( Z );
+	int8_t addr = (int8_t)ReadPC8( Z );
 	if( cond != 0 )
 	{
 		Z->reg.PC = Z->reg.PC + addr;
@@ -238,7 +264,7 @@ void JumpRelative( ZState *Z, uint8_t cond )
 }
 
 
-void Cp( ZState *Z, uint8_t v )
+void Compare( ZState *Z, uint8_t v )
 {
 	uint8_t flag = v & ( M_3 | M_5 );
 
@@ -257,15 +283,34 @@ void Cp( ZState *Z, uint8_t v )
 	Z->reg.F = flag;
 }
 
+void Exchange( ZState *Z )
+{
+	RegisterSet r;
+
+	memcpy( &r, &Z->reg, sizeof( RegisterSet ) );
+
+	Z->reg.BC = Z->sreg.BC;
+	Z->reg.DE = Z->sreg.DE;
+	Z->reg.HL = Z->sreg.HL;
+
+	Z->sreg.BC = r.BC;
+	Z->sreg.DE = r.DE;
+	Z->sreg.HL = r.HL;
+}
+
 void ExecED( ZState *Z )
 {
-	uint8_t op = ReadPC( Z );
+	uint8_t op = ReadPC8( Z );
 	
 	ASM_PRINT( "ED %s\n", g_edNames[op] );
 
 	switch( op )
 	{
 		case LD_I_A: Z->reg.I = Z->reg.A; break;
+
+		case ED_LD_RNN_HL: Write16( Z, ReadPC16( Z ), Z->reg.HL ); break;
+		case LD_RNN_DE: Write16( Z, ReadPC16( Z ), Z->reg.DE ); break;
+		case LD_RNN_BC: Write16( Z, ReadPC16( Z ), Z->reg.BC ); break;
 
 		case ADC_HL_BC: AdcHL( Z, Z->reg.B, Z->reg.C ); break;
 		case ADC_HL_DE: AdcHL( Z, Z->reg.D, Z->reg.E ); break;
@@ -285,12 +330,14 @@ void ExecED( ZState *Z )
 
 void Exec( ZState *Z )
 {
-	REG_PRINT( "A:%02x B:%02x C:%02x D:%02x E:%02x H:%02x L:%02x F:%02x I:%02x R:%02x IX:%04x IY:%04x PC:%04x SP:%04x\n",
-			Z->reg.A, Z->reg.B, Z->reg.C, Z->reg.D, Z->reg.E,
-			Z->reg.H, Z->reg.L, Z->reg.F, Z->reg.I, Z->reg.R,
+	REG_PRINT( "A:%02x F:%s B:%02x C:%02x D:%02x E:%02x H:%02x L:%02x I:%02x R:%02x IX:%04x IY:%04x PC:%04x SP:%04x\n",
+			Z->reg.A,
+			FlagString( Z->reg.F ),
+			Z->reg.B, Z->reg.C, Z->reg.D, Z->reg.E,
+			Z->reg.H, Z->reg.L, Z->reg.I, Z->reg.R,
 			Z->reg.IX, Z->reg.IY, Z->reg.PC, Z->reg.SP );
 
-	uint8_t op = ReadPC( Z );
+	uint8_t op = ReadPC8( Z );
 	
 	ASM_PRINT( "%s\n", g_basicNames[op] );
 
@@ -307,7 +354,7 @@ void Exec( ZState *Z )
 		case XOR_L: Xor( Z, Z->reg.L ); break;
 		case XOR_RHL: Xor( Z, ReadHL( Z ) ); break;
 		case XOR_A: Xor( Z, Z->reg.A ); break;
-		case XOR_N: Xor( Z, ReadPC( Z ) ); break;
+		case XOR_N: Xor( Z, ReadPC8( Z ) ); break;
 
 		case AND_B: And( Z, Z->reg.B ); break;
 		case AND_C: And( Z, Z->reg.C ); break;
@@ -317,7 +364,7 @@ void Exec( ZState *Z )
 		case AND_L: And( Z, Z->reg.L ); break;
 		case AND_RHL: And( Z, ReadHL( Z ) ); break;
 		case AND_A: And( Z, Z->reg.A ); break;
-		case AND_N: And( Z, ReadPC( Z ) ); break;
+		case AND_N: And( Z, ReadPC8( Z ) ); break;
 
 		case ADD_A_B: AddA( Z, Z->reg.B ); break;
 		case ADD_A_C: AddA( Z, Z->reg.C ); break;
@@ -327,7 +374,7 @@ void Exec( ZState *Z )
 		case ADD_A_L: AddA( Z, Z->reg.L ); break;
 		case ADD_A_RHL: AddA( Z, ReadHL( Z ) ); break;
 		case ADD_A_A: AddA( Z, Z->reg.A ); break;
-		case ADD_A_N: AddA( Z, ReadPC( Z ) ); break;
+		case ADD_A_N: AddA( Z, ReadPC8( Z ) ); break;
 
 		case ADC_A_B: AdcA( Z, Z->reg.B ); break;
 		case ADC_A_C: AdcA( Z, Z->reg.C ); break;
@@ -337,7 +384,7 @@ void Exec( ZState *Z )
 		case ADC_A_L: AdcA( Z, Z->reg.L ); break;
 		case ADC_A_RHL: AdcA( Z, ReadHL( Z ) ); break;
 		case ADC_A_A: AdcA( Z, Z->reg.A ); break;
-		case ADC_A_N: AdcA( Z, ReadPC( Z ) ); break;
+		case ADC_A_N: AdcA( Z, ReadPC8( Z ) ); break;
 
 		case SUB_A_B: SubA( Z, Z->reg.B ); break;
 		case SUB_A_C: SubA( Z, Z->reg.C ); break;
@@ -347,7 +394,7 @@ void Exec( ZState *Z )
 		case SUB_A_L: SubA( Z, Z->reg.L ); break;
 		case SUB_A_RHL: SubA( Z, ReadHL( Z ) ); break;
 		case SUB_A_A: SubA( Z, Z->reg.A ); break;
-		case SUB_A_N: SubA( Z, ReadPC( Z ) ); break;
+		case SUB_A_N: SubA( Z, ReadPC8( Z ) ); break;
 
 		case SBC_A_B: SbcA( Z, Z->reg.B ); break;
 		case SBC_A_C: SbcA( Z, Z->reg.C ); break;
@@ -357,20 +404,22 @@ void Exec( ZState *Z )
 		case SBC_A_L: SbcA( Z, Z->reg.L ); break;
 		case SBC_A_RHL: SbcA( Z, ReadHL( Z ) ); break;
 		case SBC_A_A: SbcA( Z, Z->reg.A ); break;
-		case SBC_A_N: SbcA( Z, ReadPC( Z ) ); break;
+		case SBC_A_N: SbcA( Z, ReadPC8( Z ) ); break;
 
 		case ADD_HL_BC: AddHL( Z, Z->reg.B, Z->reg.C ); break;
 		case ADD_HL_DE: AddHL( Z, Z->reg.D, Z->reg.E ); break;
 		case ADD_HL_HL: AddHL( Z, Z->reg.H, Z->reg.L ); break;
 		case ADD_HL_SP: AddHL( Z, Z->reg.SP >> 8, Z->reg.SP & 0xff ); break;
 
-		case DEC_HL: SetHL( Z, GetHL( Z ) - 1 ); break;
+		case DEC_HL: Z->reg.HL -= 1; break;
+		case INC_HL: Z->reg.HL += 1; break;
 
-		case LD_RHL_N: WriteHL( Z, ReadPC( Z ) ); break;
+		case LD_RHL_N: Write8( Z, Z->reg.HL, ReadPC8( Z ) ); break;
 
-		case LD_DE_NN: Z->reg.E = ReadPC( Z ); Z->reg.D = ReadPC( Z ); break;
-		case LD_BC_NN: Z->reg.C = ReadPC( Z ); Z->reg.B = ReadPC( Z ); break;
-		case LD_HL_NN: Z->reg.L = ReadPC( Z ); Z->reg.H = ReadPC( Z ); break;
+		case LD_DE_NN: Z->reg.DE = ReadPC16( Z ); break;
+		case LD_BC_NN: Z->reg.BC = ReadPC16( Z ); break;
+		case LD_HL_NN: Z->reg.HL = ReadPC16( Z ); break;
+		case LD_RNN_HL: Write16( Z, ReadPC16( Z ), Z->reg.HL ); break;
 
 #define LD_RR(D,S) Z->reg.D = Z->reg.S
 		case LD_A_B: LD_RR( A, B ); break;
@@ -423,7 +472,7 @@ void Exec( ZState *Z )
 		case LD_L_L: LD_RR( L, L ); break;
 		case LD_L_A: LD_RR( L, A ); break;
 		
-#define LD_RI(D) Z->reg.D = ReadPC( Z )
+#define LD_RI(D) Z->reg.D = ReadPC8( Z )
 		case LD_A_N: LD_RI( A ); break;
 		case LD_B_N: LD_RI( B ); break;
 		case LD_C_N: LD_RI( C ); break;
@@ -435,13 +484,13 @@ void Exec( ZState *Z )
 		case OUT_RN_A: PortOut( Z ); break;
 		case IN_A_RN: PortIn( Z ); break;
 
-		case CP_A: Cp( Z, Z->reg.A ); break;
-		case CP_B: Cp( Z, Z->reg.B ); break;
-		case CP_C: Cp( Z, Z->reg.C ); break;
-		case CP_D: Cp( Z, Z->reg.D ); break;
-		case CP_E: Cp( Z, Z->reg.E ); break;
-		case CP_H: Cp( Z, Z->reg.H ); break;
-		case CP_L: Cp( Z, Z->reg.L ); break;
+		case CP_A: Compare( Z, Z->reg.A ); break;
+		case CP_B: Compare( Z, Z->reg.B ); break;
+		case CP_C: Compare( Z, Z->reg.C ); break;
+		case CP_D: Compare( Z, Z->reg.D ); break;
+		case CP_E: Compare( Z, Z->reg.E ); break;
+		case CP_H: Compare( Z, Z->reg.H ); break;
+		case CP_L: Compare( Z, Z->reg.L ); break;
 
 		case JP_NN: Jump( Z, 1 ); break;
 		case JP_NZ_NN: Jump( Z, (~Z->reg.F) & M_Z ); break;
@@ -454,6 +503,8 @@ void Exec( ZState *Z )
 		case JR_Z_N: JumpRelative( Z, Z->reg.F & M_Z ); break;
 		case JR_NC_N: JumpRelative( Z, (~Z->reg.F) & M_C ); break;
 		case JR_C_N: JumpRelative( Z, Z->reg.F & M_C ); break;
+
+		case EXX: Exchange( Z ); break;
 
 		case PREFIX_ED: ExecED( Z ); break;
 		default:
@@ -495,6 +546,13 @@ void Z80_Run( ZState *Z, int cycles )
 
 int main( int argc, char *argv[] )
 {
+	RegisterSet a;
+
+	a.H = 0xff;
+	a.L = 0x00;
+
+	assert( a.HL == 0xff00 );
+
 	ZState Z;
 	Z80_InitSpectrum( &Z );
 

@@ -31,18 +31,20 @@ enum Flag
 	M_S = 1 << F_S,
 };
 
-struct Registers
+#if defined( BIG_ENDIAN )
+#define PAIR(a,b,p) union { struct { uint8_t b; uint8_t a; }; uint16_t p; }
+#else
+#define PAIR(a,b,p) union { struct { uint8_t a; uint8_t b; }; uint16_t p; }
+#endif // defined( LITTLE_ENDIAN )
+
+struct RegisterSet
 {
 	// 8-bit
-	uint8_t B;
-	uint8_t C;
-	uint8_t D;
-	uint8_t E;
-	uint8_t H;
-	uint8_t L;
-	uint8_t A;
+	PAIR( B, C, BC );
+	PAIR( D, E, DE );
+	PAIR( H, L, HL );
+	PAIR( A, F, AF );
 
-	uint8_t F;
 	uint8_t I;
 	uint8_t R;
 
@@ -57,7 +59,8 @@ struct Registers
 struct ZState
 {
 	uint8_t mem[64 * 1024];
-	Registers reg;
+	RegisterSet reg;
+	RegisterSet sreg;
 
 	bool halted;
 };
