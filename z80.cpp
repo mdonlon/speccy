@@ -125,6 +125,99 @@ void And( ZState *Z, uint8_t v )
 	SetZeroSignParity( Z, Z->reg.A );
 }
 
+uint8_t AddWithCarry8( uint8_t a, uint8_t b, uint8_t *flags )
+{
+	uint8_t result;
+	uint8_t cOut;
+	
+	if( *flags & M_C )
+	{
+		cOut = ( a >= ( 0xff - b ) );
+		result = a + b + 1;
+	}
+	else
+	{
+		cOut = ( a > ( 0xff - b ) );
+		result = a + b;
+	}
+
+	uint8_t cIns = a ^ result ^ b;
+	uint8_t overflow = ( cIns >> 7 ) ^ cOut;
+
+	*flags &= ~( M_V | M_C | M_Z | M_S );
+	*flags |= ( result & M_S ) | ( cOut << M_C ) | ( overflow << M_V );
+	if( result == 0 )
+		*flags |= M_Z;
+
+	return result;
+}
+
+
+void AdcA( ZState *Z, uint8_t b )
+{
+	Z->reg.A = AddWithCarry8( Z->reg.A, b, &Z->reg.F );
+	Z->reg.F &= ~M_N;
+}
+
+void AddA( ZState *Z, uint8_t b )
+{
+	Z->reg.F &= ~( M_N | M_C );
+	Z->reg.A = AddWithCarry8( Z->reg.A, b, &Z->reg.F );
+}
+
+void SbcA( ZState *Z, uint8_t b )
+{
+	Z->reg.F ^= M_C;
+	Z->reg.A = AddWithCarry8( Z->reg.A, ~b, &Z->reg.F );
+	Z->reg.F ^= M_C;
+	Z->reg.F |= M_N;
+}
+
+void SubA( ZState *Z, uint8_t b )
+{
+	Z->reg.F |= ( M_N | M_C );
+	Z->reg.A = AddWithCarry8( Z->reg.A, ~b, &Z->reg.F );
+}
+
+void AddHL( ZState *Z, uint8_t high, uint8_t low )
+{
+	uint8_t flags = 0;
+	Z->reg.L = AddWithCarry8( Z->reg.L, low, &flags );
+	Z->reg.H = AddWithCarry8( Z->reg.H, high, &flags );
+
+	flags &= M_C | M_H;
+	Z->reg.F &= ~( M_C | M_H );
+	Z->reg.F |= flags;
+}
+
+void AdcHL( ZState *Z, uint8_t high, uint8_t low )
+{
+	uint8_t flags = Z->reg.F;
+	Z->reg.L = AddWithCarry8( Z->reg.L, low, &flags );
+	Z->reg.H = AddWithCarry8( Z->reg.H, high, &flags );
+
+	if( Z->reg.L != 0 )
+		flags &= ~M_Z;
+
+	flags &= ~M_N;
+
+	Z->reg.F = flags;
+}
+
+void SbcHL( ZState *Z, uint8_t high, uint8_t low )
+{
+	uint8_t flags = Z->reg.F ^ M_C;
+	Z->reg.L = AddWithCarry8( Z->reg.L, ~low, &flags );
+	Z->reg.H = AddWithCarry8( Z->reg.H, ~high, &flags );
+
+	flags ^= M_C;
+	flags |= M_N;
+
+	if( Z->reg.L != 0 )
+		flags &= ~M_Z;
+
+	Z->reg.F = flags;
+}
 
 void Jump( ZState *Z, uint8_t cond )
 {
@@ -173,6 +266,16 @@ void ExecED( ZState *Z )
 	switch( op )
 	{
 		case LD_I_A: Z->reg.I = Z->reg.A; break;
+
+		case ADC_HL_BC: AdcHL( Z, Z->reg.B, Z->reg.C ); break;
+		case ADC_HL_DE: AdcHL( Z, Z->reg.D, Z->reg.E ); break;
+		case ADC_HL_HL: AdcHL( Z, Z->reg.H, Z->reg.L ); break;
+		case ADC_HL_SP: AdcHL( Z, Z->reg.SP >> 8, Z->reg.SP & 0xff ); break;
+		case SBC_HL_BC: SbcHL( Z, Z->reg.B, Z->reg.C ); break;
+		case SBC_HL_DE: SbcHL( Z, Z->reg.D, Z->reg.E ); break;
+		case SBC_HL_HL: SbcHL( Z, Z->reg.H, Z->reg.L ); break;
+		case SBC_HL_SP: SbcHL( Z, Z->reg.SP >> 8, Z->reg.SP & 0xff ); break;
+
 		default:
 			printf( "Unimplemented ED opcode 0x%02x: %s\n", op, g_edNames[op] );
 			Z->halted = true;
@@ -216,6 +319,50 @@ void Exec( ZState *Z )
 		case AND_A: And( Z, Z->reg.A ); break;
 		case AND_N: And( Z, ReadPC( Z ) ); break;
 
+		case ADD_A_B: AddA( Z, Z->reg.B ); break;
+		case ADD_A_C: AddA( Z, Z->reg.C ); break;
+		case ADD_A_D: AddA( Z, Z->reg.D ); break;
+		case ADD_A_E: AddA( Z, Z->reg.E ); break;
+		case ADD_A_H: AddA( Z, Z->reg.H ); break;
+		case ADD_A_L: AddA( Z, Z->reg.L ); break;
+		case ADD_A_RHL: AddA( Z, ReadHL( Z ) ); break;
+		case ADD_A_A: AddA( Z, Z->reg.A ); break;
+		case ADD_A_N: AddA( Z, ReadPC( Z ) ); break;
+
+		case ADC_A_B: AdcA( Z, Z->reg.B ); break;
+		case ADC_A_C: AdcA( Z, Z->reg.C ); break;
+		case ADC_A_D: AdcA( Z, Z->reg.D ); break;
+		case ADC_A_E: AdcA( Z, Z->reg.E ); break;
+		case ADC_A_H: AdcA( Z, Z->reg.H ); break;
+		case ADC_A_L: AdcA( Z, Z->reg.L ); break;
+		case ADC_A_RHL: AdcA( Z, ReadHL( Z ) ); break;
+		case ADC_A_A: AdcA( Z, Z->reg.A ); break;
+		case ADC_A_N: AdcA( Z, ReadPC( Z ) ); break;
+
+		case SUB_A_B: SubA( Z, Z->reg.B ); break;
+		case SUB_A_C: SubA( Z, Z->reg.C ); break;
+		case SUB_A_D: SubA( Z, Z->reg.D ); break;
+		case SUB_A_E: SubA( Z, Z->reg.E ); break;
+		case SUB_A_H: SubA( Z, Z->reg.H ); break;
+		case SUB_A_L: SubA( Z, Z->reg.L ); break;
+		case SUB_A_RHL: SubA( Z, ReadHL( Z ) ); break;
+		case SUB_A_A: SubA( Z, Z->reg.A ); break;
+		case SUB_A_N: SubA( Z, ReadPC( Z ) ); break;
+
+		case SBC_A_B: SbcA( Z, Z->reg.B ); break;
+		case SBC_A_C: SbcA( Z, Z->reg.C ); break;
+		case SBC_A_D: SbcA( Z, Z->reg.D ); break;
+		case SBC_A_E: SbcA( Z, Z->reg.E ); break;
+		case SBC_A_H: SbcA( Z, Z->reg.H ); break;
+		case SBC_A_L: SbcA( Z, Z->reg.L ); break;
+		case SBC_A_RHL: SbcA( Z, ReadHL( Z ) ); break;
+		case SBC_A_A: SbcA( Z, Z->reg.A ); break;
+		case SBC_A_N: SbcA( Z, ReadPC( Z ) ); break;
+
+		case ADD_HL_BC: AddHL( Z, Z->reg.B, Z->reg.C ); break;
+		case ADD_HL_DE: AddHL( Z, Z->reg.D, Z->reg.E ); break;
+		case ADD_HL_HL: AddHL( Z, Z->reg.H, Z->reg.L ); break;
+		case ADD_HL_SP: AddHL( Z, Z->reg.SP >> 8, Z->reg.SP & 0xff ); break;
 
 		case DEC_HL: SetHL( Z, GetHL( Z ) - 1 ); break;
 
@@ -345,8 +492,6 @@ void Z80_Run( ZState *Z, int cycles )
 		cycleCount++;
 	}
 }
-
-extern void ParityTest();
 
 int main( int argc, char *argv[] )
 {
