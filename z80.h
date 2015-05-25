@@ -31,26 +31,57 @@ enum Flag
 	M_S = 1 << F_S,
 };
 
+enum OpcodeRegister
+{
+	OP_REG_B = 0,
+	OP_REG_C = 1,
+	OP_REG_D = 2,
+	OP_REG_E = 3,
+	OP_REG_H = 4,
+	OP_REG_L = 5,
+	OP_REG_INDEX = 6,
+	OP_REG_A = 7,
+};
+
 #if defined( BIG_ENDIAN )
 #define PAIR(a,b,p) union { struct { uint8_t b; uint8_t a; }; uint16_t p; }
 #else
 #define PAIR(a,b,p) union { struct { uint8_t a; uint8_t b; }; uint16_t p; }
 #endif // defined( LITTLE_ENDIAN )
 
+typedef PAIR(h,l,w) Register;
+
+enum IndexRegister
+{
+	R_HL = 0,
+	R_IX = 1,
+	R_IY = 2,
+
+	R_BC = 3,
+	R_DE = 4,
+	R_AF = 5
+};
+
 struct RegisterSet
 {
-	// 8-bit
-	PAIR( B, C, BC );
-	PAIR( D, E, DE );
-	PAIR( H, L, HL );
-	PAIR( A, F, AF );
+	union
+	{
+		struct
+		{
+			PAIR( H, L, HL );
+			PAIR( IXH, IXL, IX );
+			PAIR( IYH, IYL, IY );
+			PAIR( B, C, BC );
+			PAIR( D, E, DE );
+			PAIR( A, F, AF );
+		};
+		Register r[6];
+	};
 
 	uint8_t I;
 	uint8_t R;
 
 	// 16-bit
-	uint16_t IX;
-	uint16_t IY;
 	uint16_t PC;
 	uint16_t SP;
 };
@@ -61,6 +92,10 @@ struct ZState
 	uint8_t mem[64 * 1024];
 	RegisterSet reg;
 	RegisterSet sreg;
+
+	int8_t disp;
+	IndexRegister idx;
+	Register *rIdx;
 
 	bool halted;
 };

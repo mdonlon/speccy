@@ -7,6 +7,11 @@
 #define MEM_PRINT printf
 #define REG_PRINT printf
 
+//#define ASM_PRINT(...) (void)0
+//#define MEM_PRINT(...) (void)0
+//#define REG_PRINT(...) (void)0
+
+
 
 
 /* UTILITY */
@@ -45,7 +50,7 @@ void Write8( ZState *Z, uint16_t address, uint8_t value )
 
 uint16_t Read16( ZState *Z, uint16_t address )
 {
-	uint16_t value = Read8( Z, address ) | ( Read8( Z, address + 1 ) << 8 );
+	uint16_t value = Read8( Z, address ) | ( ((uint16_t)Read8( Z, address + 1 )) << 8 );
 	return value;
 }
 
@@ -63,7 +68,7 @@ uint8_t ReadPC8( ZState *Z )
 	return value;
 }
 
-uint8_t ReadPC16( ZState *Z )
+uint16_t ReadPC16( ZState *Z )
 {
 	uint16_t value = Z->mem[Z->reg.PC] | ( Z->mem[Z->reg.PC + 1] << 8 );
 	Z->reg.PC += 2;
@@ -71,16 +76,30 @@ uint8_t ReadPC16( ZState *Z )
 }
 
 
-uint8_t ReadHL( ZState *Z )
+uint8_t ReadIndex( ZState *Z )
 {
-	return Read8( Z, Z->reg.HL );
+	uint16_t addr;
+	addr = Z->reg.r[Z->idx].w;
+	addr += Z->disp;
+
+	return Read8( Z, addr );
 }
 
-void WriteHL( ZState *Z, uint8_t v )
+void WriteIndex( ZState *Z, uint8_t v )
 {
-	return Write8( Z, Z->reg.HL, v );
+	uint16_t addr;
+	addr = Z->reg.r[Z->idx].w;
+	addr += Z->disp;
+
+	return Write8( Z, addr, v );
 }
 
+void ReadDisp( ZState *Z )
+{
+	if( Z->idx == R_HL )
+		return;
+	Z->disp = (int8_t)ReadPC8( Z );
+}
 
 /* Opcode Functions */
 void PortOut( ZState *Z )
@@ -205,24 +224,24 @@ void SubA( ZState *Z, uint8_t b )
 	Z->reg.A = AddWithCarry8( Z->reg.A, ~b, &Z->reg.F );
 }
 
-void AddHL( ZState *Z, uint8_t high, uint8_t low )
+void AddToIndex( ZState *Z, uint8_t high, uint8_t low )
 {
 	uint8_t flags = 0;
-	Z->reg.L = AddWithCarry8( Z->reg.L, low, &flags );
-	Z->reg.H = AddWithCarry8( Z->reg.H, high, &flags );
+	Z->rIdx->l = AddWithCarry8( Z->rIdx->l, low, &flags );
+	Z->rIdx->h = AddWithCarry8( Z->rIdx->h, high, &flags );
 
 	flags &= M_C | M_H;
 	Z->reg.F &= ~( M_C | M_H );
 	Z->reg.F |= flags;
 }
 
-void AdcHL( ZState *Z, uint8_t high, uint8_t low )
+void AdcToIndex( ZState *Z, uint8_t high, uint8_t low )
 {
 	uint8_t flags = Z->reg.F;
-	Z->reg.L = AddWithCarry8( Z->reg.L, low, &flags );
-	Z->reg.H = AddWithCarry8( Z->reg.H, high, &flags );
+	Z->rIdx->l = AddWithCarry8( Z->rIdx->l, low, &flags );
+	Z->rIdx->h = AddWithCarry8( Z->rIdx->h, high, &flags );
 
-	if( Z->reg.L != 0 )
+	if( Z->rIdx->l != 0 )
 		flags &= ~M_Z;
 
 	flags &= ~M_N;
@@ -230,20 +249,37 @@ void AdcHL( ZState *Z, uint8_t high, uint8_t low )
 	Z->reg.F = flags;
 }
 
-void SbcHL( ZState *Z, uint8_t high, uint8_t low )
+void SbcToIndex( ZState *Z, uint8_t high, uint8_t low )
 {
 	uint8_t flags = Z->reg.F ^ M_C;
-	Z->reg.L = AddWithCarry8( Z->reg.L, ~low, &flags );
-	Z->reg.H = AddWithCarry8( Z->reg.H, ~high, &flags );
+	Z->rIdx->l = AddWithCarry8( Z->rIdx->l, ~low, &flags );
+	Z->rIdx->h = AddWithCarry8( Z->rIdx->h, ~high, &flags );
 
 	flags ^= M_C;
 	flags |= M_N;
 
-	if( Z->reg.L != 0 )
+	if( Z->rIdx->l != 0 )
 		flags &= ~M_Z;
 
 	Z->reg.F = flags;
 }
+
+uint8_t Increment8( ZState *Z, uint8_t v )
+{
+	uint8_t flags = Z->reg.F & ~M_C;
+	v = AddWithCarry8( v, 1, &flags );
+	Z->reg.F = ( Z->reg.F & M_C ) | ( flags & ~M_C );
+	return v;
+}
+
+uint8_t Decrement8( ZState *Z, uint8_t v )
+{
+	uint8_t flags = Z->reg.F | M_C;
+	v = AddWithCarry8( v, ~1, &flags );
+	Z->reg.F = ( Z->reg.F & M_C ) | ( flags & ~M_C );
+	return v;
+}
+
 
 void Jump( ZState *Z, uint8_t cond )
 {
@@ -298,6 +334,193 @@ void Exchange( ZState *Z )
 	Z->sreg.HL = r.HL;
 }
 
+bool Ldd( ZState *Z )
+{
+	Write8( Z, Z->reg.DE, Read8( Z, Z->reg.HL ) );
+	Z->reg.HL -= 1;
+	Z->reg.DE -= 1;
+	Z->reg.BC -= 1;
+
+	Z->reg.F &= ~( M_N | M_P | M_H );
+
+	return Z->reg.BC == 0;
+}
+
+bool Ldi( ZState *Z )
+{
+	Write8( Z, Z->reg.DE, Read8( Z, Z->reg.HL ) );
+	Z->reg.HL += 1;
+	Z->reg.DE += 1;
+	Z->reg.BC -= 1;
+
+	Z->reg.F &= ~( M_N | M_P | M_H );
+
+	return Z->reg.BC == 0;
+}
+
+void SetIndexRegister( ZState *Z, IndexRegister idx )
+{
+	assert( idx == R_HL || idx == R_IX || idx == R_IY );
+	Z->idx = idx;
+	Z->rIdx = &Z->reg.r[idx];
+}
+
+void ExecCB( ZState *Z )
+{
+	uint8_t fullOp = ReadPC8( Z );
+	uint8_t op = fullOp >> 3;
+	OpcodeRegister operandReg = (OpcodeRegister)( fullOp & 7 );
+	uint8_t operand;
+	uint8_t carryIn, carryOut;
+	bool copyOperand = false;
+
+	if( Z->idx != R_HL )
+	{
+		ReadDisp( Z );
+		operand = ReadIndex( Z );
+		if( operandReg != OP_REG_INDEX )
+			copyOperand = true;
+	}
+	else
+	{
+		switch( operandReg )
+		{
+			case OP_REG_B: operand = Z->reg.B; break;
+			case OP_REG_C: operand = Z->reg.C; break;
+			case OP_REG_D: operand = Z->reg.D; break;
+			case OP_REG_E: operand = Z->reg.E; break;
+			case OP_REG_H: operand = Z->reg.H; break;
+			case OP_REG_L: operand = Z->reg.L; break;
+			case OP_REG_INDEX: operand = ReadIndex( Z ); break;
+			case OP_REG_A: operand = Z->reg.A; break;
+		};
+	}
+
+	ASM_PRINT( "CB %s\n", g_cbNames[op] );
+
+	switch( op )
+	{
+		case RLC:
+			Z->reg.F &= ~(M_N | M_H | M_C);
+			carryOut = ( operand >> 7 ) & 1;
+			operand <<= 1;
+			operand |= carryOut;
+			Z->reg.F |= carryOut << F_C;
+			SetZeroSignParity( Z, operand );
+			break;
+
+		case RRC:
+			Z->reg.F &= ~(M_N | M_H | M_C);
+			carryOut = ( operand ) & 1;
+			operand >>= 1;
+			operand |= carryOut << 7;
+			Z->reg.F |= carryOut << F_C;
+			SetZeroSignParity( Z, operand );
+			break;
+
+		case RL:
+			carryIn = ( Z->reg.F >> F_C ) & 1;
+			Z->reg.F &= ~(M_N | M_H | M_C);
+			carryOut = ( operand >> 7 ) & 1;
+			operand <<= 1;
+			operand |= carryIn;
+			Z->reg.F |= carryOut << F_C;
+			SetZeroSignParity( Z, operand );
+			break;
+
+		case RR:
+			carryIn = ( Z->reg.F >> F_C ) & 1;
+			Z->reg.F &= ~(M_N | M_H | M_C);
+			carryOut = ( operand ) & 1;
+			operand >>= 1;
+			operand |= carryIn << 7;
+			Z->reg.F |= carryOut << F_C;
+			SetZeroSignParity( Z, operand );
+			break;
+
+		case SLA:
+			Z->reg.F &= ~(M_N | M_H | M_C);
+			carryOut = ( operand >> 7 ) & 1;
+			operand <<= 1;
+			Z->reg.F |= carryOut << F_C;
+			SetZeroSignParity( Z, operand );
+			break;
+
+		case SRA:
+			Z->reg.F &= ~(M_N | M_H | M_C);
+			carryOut = ( operand ) & 1;
+			operand = (uint8_t)( ( (int8_t) operand ) >> 1 );
+			Z->reg.F |= carryOut << F_C;
+			SetZeroSignParity( Z, operand );
+			break;
+
+		case SLL:
+			Z->reg.F &= ~(M_N | M_H | M_C);
+			carryOut = ( operand >> 7 ) & 1;
+			operand <<= 1;
+			operand |= 1;
+			Z->reg.F |= carryOut << F_C;
+			SetZeroSignParity( Z, operand );
+			break;
+
+		case SRL:
+			Z->reg.F &= ~(M_N | M_H | M_C);
+			carryOut = ( operand ) & 1;
+			operand >>= 1;
+			Z->reg.F |= carryOut << F_C;
+			SetZeroSignParity( Z, operand );
+			break;
+
+#define BIT_TEST(x) do { copyOperand = false; Z->reg.F |= M_H; Z->reg.F &= ~( M_N | M_Z ); if( ( operand & ( 1 << (x) ) ) == 0 ) Z->reg.F |= M_Z; } while( 0 )
+		case BIT_0: BIT_TEST( 0 ); break;
+		case BIT_1: BIT_TEST( 1 ); break;
+		case BIT_2: BIT_TEST( 2 ); break;
+		case BIT_3: BIT_TEST( 3 ); break;
+		case BIT_4: BIT_TEST( 4 ); break;
+		case BIT_5: BIT_TEST( 5 ); break;
+		case BIT_6: BIT_TEST( 6 ); break;
+		case BIT_7: BIT_TEST( 7 ); break;
+
+		case RES_0: operand &= ~( 1 << 0 ); break;
+		case RES_1: operand &= ~( 1 << 1 ); break;
+		case RES_2: operand &= ~( 1 << 2 ); break;
+		case RES_3: operand &= ~( 1 << 3 ); break;
+		case RES_4: operand &= ~( 1 << 4 ); break;
+		case RES_5: operand &= ~( 1 << 5 ); break;
+		case RES_6: operand &= ~( 1 << 6 ); break;
+		case RES_7: operand &= ~( 1 << 7 ); break;
+
+		case SET_0: operand |= ( 1 << 0 ); break;
+		case SET_1: operand |= ( 1 << 1 ); break;
+		case SET_2: operand |= ( 1 << 2 ); break;
+		case SET_3: operand |= ( 1 << 3 ); break;
+		case SET_4: operand |= ( 1 << 4 ); break;
+		case SET_5: operand |= ( 1 << 5 ); break;
+		case SET_6: operand |= ( 1 << 6 ); break;
+		case SET_7: operand |= ( 1 << 7 ); break;
+	}
+
+	if( Z->idx != R_HL )
+	{
+		WriteIndex( Z, operand );
+	}
+
+	if( copyOperand || Z->idx == R_HL )
+	{
+		switch( operandReg )
+		{
+			case OP_REG_B: Z->reg.B = operand; break;
+			case OP_REG_C: Z->reg.C = operand; break;
+			case OP_REG_D: Z->reg.D = operand; break;
+			case OP_REG_E: Z->reg.E = operand; break;
+			case OP_REG_H: Z->reg.H = operand; break;
+			case OP_REG_L: Z->reg.L = operand; break;
+			case OP_REG_INDEX: WriteIndex( Z, operand ); break;
+			case OP_REG_A: Z->reg.A = operand; break;
+		};
+	}
+}
+
 void ExecED( ZState *Z )
 {
 	uint8_t op = ReadPC8( Z );
@@ -306,20 +529,29 @@ void ExecED( ZState *Z )
 
 	switch( op )
 	{
+		case IM_1: printf( "IM_1 NOT IMPLEMENTED\n" ); break;
+		case IM_0: printf( "IM_0 NOT IMPLEMENTED\n" ); break;
+
 		case LD_I_A: Z->reg.I = Z->reg.A; break;
 
-		case ED_LD_RNN_HL: Write16( Z, ReadPC16( Z ), Z->reg.HL ); break;
+		case ED_LD_RNN_HL: Write16( Z, ReadPC16( Z ), Z->rIdx->w ); break;
 		case LD_RNN_DE: Write16( Z, ReadPC16( Z ), Z->reg.DE ); break;
 		case LD_RNN_BC: Write16( Z, ReadPC16( Z ), Z->reg.BC ); break;
 
-		case ADC_HL_BC: AdcHL( Z, Z->reg.B, Z->reg.C ); break;
-		case ADC_HL_DE: AdcHL( Z, Z->reg.D, Z->reg.E ); break;
-		case ADC_HL_HL: AdcHL( Z, Z->reg.H, Z->reg.L ); break;
-		case ADC_HL_SP: AdcHL( Z, Z->reg.SP >> 8, Z->reg.SP & 0xff ); break;
-		case SBC_HL_BC: SbcHL( Z, Z->reg.B, Z->reg.C ); break;
-		case SBC_HL_DE: SbcHL( Z, Z->reg.D, Z->reg.E ); break;
-		case SBC_HL_HL: SbcHL( Z, Z->reg.H, Z->reg.L ); break;
-		case SBC_HL_SP: SbcHL( Z, Z->reg.SP >> 8, Z->reg.SP & 0xff ); break;
+		case LDD: Ldd( Z ); break;
+		case LDDR: if( !Ldd( Z ) ) Z->reg.PC -= 2; break;
+		case LDI: Ldi( Z ); break;
+		case LDIR: if( !Ldi( Z ) ) Z->reg.PC -= 2; break;
+
+
+		case ADC_HL_BC: AdcToIndex( Z, Z->reg.B, Z->reg.C ); break;
+		case ADC_HL_DE: AdcToIndex( Z, Z->reg.D, Z->reg.E ); break;
+		case ADC_HL_HL: AdcToIndex( Z, Z->reg.H, Z->reg.L ); break;
+		case ADC_HL_SP: AdcToIndex( Z, Z->reg.SP >> 8, Z->reg.SP & 0xff ); break;
+		case SBC_HL_BC: SbcToIndex( Z, Z->reg.B, Z->reg.C ); break;
+		case SBC_HL_DE: SbcToIndex( Z, Z->reg.D, Z->reg.E ); break;
+		case SBC_HL_HL: SbcToIndex( Z, Z->reg.H, Z->reg.L ); break;
+		case SBC_HL_SP: SbcToIndex( Z, Z->reg.SP >> 8, Z->reg.SP & 0xff ); break;
 
 		default:
 			printf( "Unimplemented ED opcode 0x%02x: %s\n", op, g_edNames[op] );
@@ -330,6 +562,9 @@ void ExecED( ZState *Z )
 
 void Exec( ZState *Z )
 {
+	uint16_t u16Temp;
+	uint8_t u8Temp;
+
 	REG_PRINT( "A:%02x F:%s B:%02x C:%02x D:%02x E:%02x H:%02x L:%02x I:%02x R:%02x IX:%04x IY:%04x PC:%04x SP:%04x\n",
 			Z->reg.A,
 			FlagString( Z->reg.F ),
@@ -346,13 +581,14 @@ void Exec( ZState *Z )
 		case NOP: break;
 		case HALT: Z->halted = true; break;
 		case DI: printf( "DI NOT IMPLEMENTED!\n" ); break;
+		case EI: printf( "EI NOT IMPLEMENTED!\n" ); break;
 		case XOR_B: Xor( Z, Z->reg.B ); break;
 		case XOR_C: Xor( Z, Z->reg.C ); break;
 		case XOR_D: Xor( Z, Z->reg.D ); break;
 		case XOR_E: Xor( Z, Z->reg.E ); break;
-		case XOR_H: Xor( Z, Z->reg.H ); break;
-		case XOR_L: Xor( Z, Z->reg.L ); break;
-		case XOR_RHL: Xor( Z, ReadHL( Z ) ); break;
+		case XOR_H: Xor( Z, Z->rIdx->h ); break;
+		case XOR_L: Xor( Z, Z->rIdx->l ); break;
+		case XOR_RHL: ReadDisp( Z ); Xor( Z, ReadIndex( Z ) ); break;
 		case XOR_A: Xor( Z, Z->reg.A ); break;
 		case XOR_N: Xor( Z, ReadPC8( Z ) ); break;
 
@@ -360,9 +596,9 @@ void Exec( ZState *Z )
 		case AND_C: And( Z, Z->reg.C ); break;
 		case AND_D: And( Z, Z->reg.D ); break;
 		case AND_E: And( Z, Z->reg.E ); break;
-		case AND_H: And( Z, Z->reg.H ); break;
-		case AND_L: And( Z, Z->reg.L ); break;
-		case AND_RHL: And( Z, ReadHL( Z ) ); break;
+		case AND_H: And( Z, Z->rIdx->h ); break;
+		case AND_L: And( Z, Z->rIdx->l ); break;
+		case AND_RHL: ReadDisp( Z ); And( Z, ReadIndex( Z ) ); break;
 		case AND_A: And( Z, Z->reg.A ); break;
 		case AND_N: And( Z, ReadPC8( Z ) ); break;
 
@@ -370,9 +606,9 @@ void Exec( ZState *Z )
 		case ADD_A_C: AddA( Z, Z->reg.C ); break;
 		case ADD_A_D: AddA( Z, Z->reg.D ); break;
 		case ADD_A_E: AddA( Z, Z->reg.E ); break;
-		case ADD_A_H: AddA( Z, Z->reg.H ); break;
-		case ADD_A_L: AddA( Z, Z->reg.L ); break;
-		case ADD_A_RHL: AddA( Z, ReadHL( Z ) ); break;
+		case ADD_A_H: AddA( Z, Z->rIdx->h ); break;
+		case ADD_A_L: AddA( Z, Z->rIdx->l ); break;
+		case ADD_A_RHL: ReadDisp( Z ); AddA( Z, ReadIndex( Z ) ); break;
 		case ADD_A_A: AddA( Z, Z->reg.A ); break;
 		case ADD_A_N: AddA( Z, ReadPC8( Z ) ); break;
 
@@ -380,9 +616,9 @@ void Exec( ZState *Z )
 		case ADC_A_C: AdcA( Z, Z->reg.C ); break;
 		case ADC_A_D: AdcA( Z, Z->reg.D ); break;
 		case ADC_A_E: AdcA( Z, Z->reg.E ); break;
-		case ADC_A_H: AdcA( Z, Z->reg.H ); break;
-		case ADC_A_L: AdcA( Z, Z->reg.L ); break;
-		case ADC_A_RHL: AdcA( Z, ReadHL( Z ) ); break;
+		case ADC_A_H: AdcA( Z, Z->rIdx->h ); break;
+		case ADC_A_L: AdcA( Z, Z->rIdx->l ); break;
+		case ADC_A_RHL: ReadDisp( Z ); AdcA( Z, ReadIndex( Z ) ); break;
 		case ADC_A_A: AdcA( Z, Z->reg.A ); break;
 		case ADC_A_N: AdcA( Z, ReadPC8( Z ) ); break;
 
@@ -390,9 +626,9 @@ void Exec( ZState *Z )
 		case SUB_A_C: SubA( Z, Z->reg.C ); break;
 		case SUB_A_D: SubA( Z, Z->reg.D ); break;
 		case SUB_A_E: SubA( Z, Z->reg.E ); break;
-		case SUB_A_H: SubA( Z, Z->reg.H ); break;
-		case SUB_A_L: SubA( Z, Z->reg.L ); break;
-		case SUB_A_RHL: SubA( Z, ReadHL( Z ) ); break;
+		case SUB_A_H: SubA( Z, Z->rIdx->h ); break;
+		case SUB_A_L: SubA( Z, Z->rIdx->l ); break;
+		case SUB_A_RHL: ReadDisp( Z ); SubA( Z, ReadIndex( Z ) ); break;
 		case SUB_A_A: SubA( Z, Z->reg.A ); break;
 		case SUB_A_N: SubA( Z, ReadPC8( Z ) ); break;
 
@@ -400,26 +636,50 @@ void Exec( ZState *Z )
 		case SBC_A_C: SbcA( Z, Z->reg.C ); break;
 		case SBC_A_D: SbcA( Z, Z->reg.D ); break;
 		case SBC_A_E: SbcA( Z, Z->reg.E ); break;
-		case SBC_A_H: SbcA( Z, Z->reg.H ); break;
-		case SBC_A_L: SbcA( Z, Z->reg.L ); break;
-		case SBC_A_RHL: SbcA( Z, ReadHL( Z ) ); break;
+		case SBC_A_H: SbcA( Z, Z->rIdx->h ); break;
+		case SBC_A_L: SbcA( Z, Z->rIdx->l ); break;
+		case SBC_A_RHL: ReadDisp( Z ); SbcA( Z, ReadIndex( Z ) ); break;
 		case SBC_A_A: SbcA( Z, Z->reg.A ); break;
 		case SBC_A_N: SbcA( Z, ReadPC8( Z ) ); break;
 
-		case ADD_HL_BC: AddHL( Z, Z->reg.B, Z->reg.C ); break;
-		case ADD_HL_DE: AddHL( Z, Z->reg.D, Z->reg.E ); break;
-		case ADD_HL_HL: AddHL( Z, Z->reg.H, Z->reg.L ); break;
-		case ADD_HL_SP: AddHL( Z, Z->reg.SP >> 8, Z->reg.SP & 0xff ); break;
+		case INC_B: Z->reg.B = Increment8( Z, Z->reg.B ); break;
+		case INC_C: Z->reg.C = Increment8( Z, Z->reg.C ); break;
+		case INC_D: Z->reg.D = Increment8( Z, Z->reg.D ); break;
+		case INC_E: Z->reg.E = Increment8( Z, Z->reg.E ); break;
+		case INC_H: Z->rIdx->h = Increment8( Z, Z->rIdx->h ); break;
+		case INC_L: Z->rIdx->l = Increment8( Z, Z->rIdx->l ); break;
+		case INC_A: Z->reg.A = Increment8( Z, Z->reg.A ); break;
+		case INC_RHL: ReadDisp( Z ); WriteIndex( Z, Increment8( Z, ReadIndex( Z ) ) ); break;
 
-		case DEC_HL: Z->reg.HL -= 1; break;
-		case INC_HL: Z->reg.HL += 1; break;
+		case DEC_B: Z->reg.B = Decrement8( Z, Z->reg.B ); break;
+		case DEC_C: Z->reg.C = Decrement8( Z, Z->reg.C ); break;
+		case DEC_D: Z->reg.D = Decrement8( Z, Z->reg.D ); break;
+		case DEC_E: Z->reg.E = Decrement8( Z, Z->reg.E ); break;
+		case DEC_H: Z->rIdx->h = Decrement8( Z, Z->rIdx->h ); break;
+		case DEC_L: Z->rIdx->l = Decrement8( Z, Z->rIdx->l ); break;
+		case DEC_A: Z->reg.A = Decrement8( Z, Z->reg.A ); break;
+		case DEC_RHL: ReadDisp( Z ); WriteIndex( Z, Decrement8( Z, ReadIndex( Z ) ) ); break;
 
+
+		case ADD_HL_BC: AddToIndex( Z, Z->reg.B, Z->reg.C ); break;
+		case ADD_HL_DE: AddToIndex( Z, Z->reg.D, Z->reg.E ); break;
+		case ADD_HL_HL: AddToIndex( Z, Z->reg.H, Z->reg.L ); break;
+		case ADD_HL_SP: AddToIndex( Z, Z->reg.SP >> 8, Z->reg.SP & 0xff ); break;
+
+		case DEC_HL: Z->rIdx->w -= 1; break;
+		case INC_HL: Z->rIdx->w += 1; break;
+
+		case LD_RNN_A: Write8( Z, ReadPC16( Z ), Z->reg.A ); break;
 		case LD_RHL_N: Write8( Z, Z->reg.HL, ReadPC8( Z ) ); break;
 
+		case LD_SP_NN: Z->reg.SP = ReadPC16( Z ); break;
 		case LD_DE_NN: Z->reg.DE = ReadPC16( Z ); break;
 		case LD_BC_NN: Z->reg.BC = ReadPC16( Z ); break;
-		case LD_HL_NN: Z->reg.HL = ReadPC16( Z ); break;
-		case LD_RNN_HL: Write16( Z, ReadPC16( Z ), Z->reg.HL ); break;
+		case LD_HL_NN: Z->rIdx->w = ReadPC16( Z ); break;
+		case LD_RNN_HL: Write16( Z, ReadPC16( Z ), Z->rIdx->w ); break;
+		case LD_HL_RNN: Z->rIdx->w = Read16( Z, ReadPC16( Z ) ); break;
+		case LD_SP_HL: Z->reg.SP = Z->reg.HL; break;
+
 
 #define LD_RR(D,S) Z->reg.D = Z->reg.S
 		case LD_A_B: LD_RR( A, B ); break;
@@ -489,8 +749,8 @@ void Exec( ZState *Z )
 		case CP_C: Compare( Z, Z->reg.C ); break;
 		case CP_D: Compare( Z, Z->reg.D ); break;
 		case CP_E: Compare( Z, Z->reg.E ); break;
-		case CP_H: Compare( Z, Z->reg.H ); break;
-		case CP_L: Compare( Z, Z->reg.L ); break;
+		case CP_H: Compare( Z, Z->rIdx->h ); break;
+		case CP_L: Compare( Z, Z->rIdx->l ); break;
 
 		case JP_NN: Jump( Z, 1 ); break;
 		case JP_NZ_NN: Jump( Z, (~Z->reg.F) & M_Z ); break;
@@ -505,8 +765,13 @@ void Exec( ZState *Z )
 		case JR_C_N: JumpRelative( Z, Z->reg.F & M_C ); break;
 
 		case EXX: Exchange( Z ); break;
+		case EX_DE_HL: u16Temp = Z->reg.DE; Z->reg.DE = Z->reg.HL; Z->reg.HL = u16Temp; break;
 
+		case PREFIX_CB: ExecCB( Z ); break;
 		case PREFIX_ED: ExecED( Z ); break;
+		case PREFIX_DD: SetIndexRegister( Z, R_IX ); Exec( Z ); break;
+		case PREFIX_FD: SetIndexRegister( Z, R_IY ); Exec( Z ); break;
+
 		default:
 			printf( "Unimplemented opcode 0x%02x: %s\n", op, g_basicNames[op] );
 			Z->halted = true;
@@ -539,6 +804,7 @@ void Z80_Run( ZState *Z, int cycles )
 	int cycleCount = 0;
 	while( !Z->halted && ( cycles < 0 || cycles > cycleCount ) )
 	{
+		SetIndexRegister( Z, R_HL );
 		Exec( Z );
 		cycleCount++;
 	}
@@ -552,6 +818,7 @@ int main( int argc, char *argv[] )
 	a.L = 0x00;
 
 	assert( a.HL == 0xff00 );
+	assert( a.r[R_HL].h == 0xff );
 
 	ZState Z;
 	Z80_InitSpectrum( &Z );

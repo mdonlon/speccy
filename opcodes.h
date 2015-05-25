@@ -11,13 +11,9 @@ enum EDOps
 {
 #include "ed_opcodes.h"
 };
-enum FDOps
+enum CBOps
 {
-#include "fd_opcodes.h"
-};
-enum DDOps
-{
-#include "dd_opcodes.h"
+#include "cb_opcodes.h"
 };
 #undef OP
 
@@ -27,11 +23,8 @@ extern const char *g_basicNames[];
 extern int g_edCycleCount[];
 extern const char *g_edNames[];
 
-extern int g_fdCycleCount[];
-extern const char *g_fdNames[];
-
-extern int g_ddCycleCount[];
-extern const char *g_ddNames[];
+extern int g_cbCycleCount[];
+extern const char *g_cbNames[];
 
 
 #endif // OPCODES_H

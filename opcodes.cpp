@@ -9,13 +9,9 @@ int g_edCycleCount[] =
 {
 #include "ed_opcodes.h"
 };
-int g_fdCycleCount[] =
+int g_cbCycleCount[] =
 {
-#include "fd_opcodes.h"
-};
-int g_ddCycleCount[] =
-{
-#include "dd_opcodes.h"
+#include "cb_opcodes.h"
 };
 #undef OP
 
@@ -28,12 +24,8 @@ const char *g_edNames[] =
 {
 #include "ed_opcodes.h"
 };
-const char *g_fdNames[] =
+const char *g_cbNames[] =
 {
-#include "fd_opcodes.h"
-};
-const char *g_ddNames[] =
-{
-#include "dd_opcodes.h"
+#include "cb_opcodes.h"
 };
 #undef OP
