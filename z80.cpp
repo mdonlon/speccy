@@ -4,6 +4,8 @@
 #include "z80.h"
 #include "opcodes.h"
 
+#include "screen.h"
+
 //#define ASM_PRINT printf
 //#define MEM_PRINT printf
 //#define REG_PRINT printf
@@ -134,6 +136,21 @@ uint16_t Pop16( ZState *Z )
 }
 
 /* Opcode Functions */
+
+uint8_t ReadPort( ZState *Z, uint16_t addr )
+{
+	for( int i = 0; i < Z->peripheralCount; i++ )
+	{
+		if( Z->peripherals[i].Read == NULL )
+			continue;
+
+		if( ( addr & Z->peripherals[i].mask ) == Z->peripherals[i].address )
+			return Z->peripherals[i].Read( Z, addr );
+	}
+
+	return 0x00;
+}
+
 void PortOut( ZState *Z )
 {
 	uint8_t port = ReadPC8( Z );
@@ -142,9 +159,9 @@ void PortOut( ZState *Z )
 
 void PortIn( ZState *Z )
 {
-	uint8_t port = ReadPC8( Z );
-	Z->reg.A = 0x00;
-	ASM_PRINT( "IN: (%02x) -> %02x\n", port, Z->reg.A );
+	uint16_t addr = ( Z->reg.A << 8 ) | ReadPC8( Z );
+	Z->reg.A = ReadPort( Z, addr );
+	ASM_PRINT( "IN: (%04x) -> %02x\n", addr, Z->reg.A );
 }
 
 void PortOutC( ZState *Z, uint8_t v )
@@ -155,9 +172,10 @@ void PortOutC( ZState *Z, uint8_t v )
 
 uint8_t PortInC( ZState *Z )
 {
-	uint8_t port = Z->reg.C;
-	ASM_PRINT( "IN: (%02x) -> %02x\n", port, 0x00 );
-	return 0x00;
+	uint16_t port = Z->reg.BC;
+	uint8_t v = ReadPort( Z, port );
+	ASM_PRINT( "IN: (%04x) -> %02x\n", port, v );
+	return v;
 }
 
 
@@ -618,8 +636,8 @@ void ExecED( ZState *Z )
 
 	switch( op )
 	{
-		case IM_1: DBG_PRINT( "IM_1 NOT IMPLEMENTED\n" ); break;
-		case IM_0: DBG_PRINT( "IM_0 NOT IMPLEMENTED\n" ); break;
+		case IM_1: Z->IMODE = 1; break;
+		case IM_0: Z->IMODE = 0; break;
 
 		case LD_I_A: Z->reg.I = Z->reg.A; break;
 
@@ -687,8 +705,8 @@ void Exec( ZState *Z )
 	{
 		case NOP: break;
 		case HALT: Z->halted = true; break;
-		case DI: DBG_PRINT( "DI NOT IMPLEMENTED!\n" ); break;
-		case EI: DBG_PRINT( "EI NOT IMPLEMENTED!\n" ); break;
+		case DI: Z->IFF0 = 0; break;
+		case EI: Z->IFF0 = 1; break;
 
 		case OR_B: Or( Z, Z->reg.B ); break;
 		case OR_C: Or( Z, Z->reg.C ); break;
@@ -934,7 +952,7 @@ void Exec( ZState *Z )
 
 		case RST_00: Push16( Z, Z->reg.PC ); Z->reg.PC = 0x00; break;
 		case RST_08: Push16( Z, Z->reg.PC ); Z->reg.PC = 0x08; break;
-		case RST_10: printf( "RST: %c\n", Z->reg.A ); Push16( Z, Z->reg.PC ); Z->reg.PC = 0x10; break;
+		case RST_10: Push16( Z, Z->reg.PC ); Z->reg.PC = 0x10; break;
 		case RST_18: Push16( Z, Z->reg.PC ); Z->reg.PC = 0x18; break;
 		case RST_20: Push16( Z, Z->reg.PC ); Z->reg.PC = 0x20; break;
 		case RST_28: Push16( Z, Z->reg.PC ); Z->reg.PC = 0x28; break;
@@ -969,6 +987,8 @@ void Exec( ZState *Z )
 		case JP_Z_NN: Jump( Z, Z->reg.F & M_Z ); break;
 		case JP_NC_NN: Jump( Z, (~Z->reg.F) & M_C ); break;
 		case JP_C_NN: Jump( Z, Z->reg.F & M_C ); break;
+		case JP_M_NN: Jump( Z, Z->reg.F & M_S ); break;
+		case JP_P_NN: Jump( Z, (~Z->reg.F) & M_S ); break;
 
 		case JR_N: JumpRelative( Z, 1 ); break;
 		case JR_NZ_N: JumpRelative( Z, (~Z->reg.F) & M_Z ); break;
@@ -999,6 +1019,16 @@ void Exec( ZState *Z )
 	}
 }
 
+void Z80_MaskableInterrupt( ZState *Z )
+{
+	Z->INT = 1;
+}
+
+void Z80_NonMaskableInterrupt( ZState *Z )
+{
+	Z->NMI = 1;
+}
+
 void Z80_Reset( ZState *Z )
 {
 	memset( Z, 0, sizeof( ZState ) );
@@ -1022,34 +1052,27 @@ void Z80_InitSpectrum( ZState *Z )
 void Z80_Run( ZState *Z, int cycles )
 {
 	int cycleCount = 0;
+	if( Z->NMI )
+	{
+		Z->IFF1 = Z->IFF0;
+		Z->IFF0 = 0;
+		Z->NMI = 0;
+		Push16( Z, Z->reg.PC );
+		Z->reg.PC = 0x0066;
+	}
+	else if( Z->INT && Z->IFF0 )
+	{
+		Z->IFF0 = Z->IFF1 = 0;
+		Z->INT = 0;
+		Push16( Z, Z->reg.PC );
+		Z->reg.PC = 0x0038;
+	}
+
 	while( !Z->halted && ( cycles < 0 || cycles > cycleCount ) )
 	{
 		SetIndexRegister( Z, R_HL );
 		Exec( Z );
 		cycleCount++;
 	}
-}
-
-int main( int argc, char *argv[] )
-{
-	RegisterSet a;
-
-	a.H = 0xff;
-	a.L = 0x00;
-
-	assert( a.HL == 0xff00 );
-	assert( a.r[R_HL].h == 0xff );
-
-	ZState Z;
-	Z80_InitSpectrum( &Z );
-
-	Z80_Run( &Z, 200000000 );
-
-	FILE *fp = fopen( "vidmem.pbm", "wb" );
-	fwrite( "P4 256 192\n", strlen( "P4 256 192\n" ) , 1, fp );
-	fwrite( &Z.mem[0x4000], 6 * 1024, 1, fp );
-	fclose( fp );
-
-	return 0;
 }
 

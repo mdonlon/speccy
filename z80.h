@@ -86,6 +86,16 @@ struct RegisterSet
 	uint16_t SP;
 };
 
+struct ZState;
+
+struct ZPeripheral
+{
+	uint16_t mask;
+	uint16_t address;
+
+	uint8_t (*Read)( ZState *, uint16_t );
+	void (*Write)( ZState *, uint16_t, uint8_t );
+};
 
 struct ZState
 {
@@ -93,16 +103,28 @@ struct ZState
 	RegisterSet reg;
 	RegisterSet sreg;
 
+	uint8_t IFF0:1;
+	uint8_t IFF1:1;
+	uint8_t NMI:1;
+	uint8_t INT:1;
+	uint8_t IMODE:2;
+
+
 	int8_t disp;
 	IndexRegister idx;
 	Register *rIdx;
 
 	bool halted;
+
+	int peripheralCount;
+	ZPeripheral peripherals[8];
 };
 
 void Z80_Reset( ZState *Z );
 void Z80_InitSpectrum( ZState *Z );
 void Z80_Run( ZState *Z, int cycles );
+void Z80_MaskableInterrupt( ZState *Z );
+void Z80_NonMaskableInterrupt( ZState *Z );
 
 
 #endif // !defined( Z80_H )
