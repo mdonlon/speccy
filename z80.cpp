@@ -16,9 +16,6 @@
 #define REG_PRINT(...) (void)0
 #define DBG_PRINT(...) (void)0
 
-
-
-
 /* UTILITY */
 const char *FlagString( uint8_t f )
 {
@@ -38,19 +35,51 @@ const char *FlagString( uint8_t f )
 
 uint8_t Read8( ZState *Z, uint16_t address )
 {
-	uint8_t value = Z->mem[address];
+	uint8_t value;
+	for( int i = 0; i < Z->memoryCount; i++ )
+	{
+		if( Z->memory[i].base > address )
+			continue;
 
-	MEM_PRINT( "Read 0x%04x -> 0x%02x\n", address, value );
+		uint16_t ofs = address - Z->memory[i].base;
+
+		if( ofs >= Z->memory[i].size )
+			continue;
+
+		value = Z->memory[i].ptr[ofs];
+		break;
+	}
+
+	if( address == 0x5c3b )
+	{
+		MEM_PRINT( "Read 0x%04x -> 0x%02x\n", address, value );
+	}
 
 	return value;
 }
 
 void Write8( ZState *Z, uint16_t address, uint8_t value )
 {
-	MEM_PRINT( "Write 0x%04x <- 0x%02x\n", address, value );
+	if( address == 0x5c3b )
+	{
+		MEM_PRINT( "Write 0x%04x <- 0x%02x\n", address, value );
+	}
+	for( int i = 0; i < Z->memoryCount; i++ )
+	{
+		if( Z->memory[i].type == MEM_ROM )
+			continue;
 
-	if( ( address & RAM_MASK ) != 0 )
-		Z->mem[address] = value;
+		if( Z->memory[i].base > address )
+			continue;
+
+		uint16_t ofs = address - Z->memory[i].base;
+
+		if( ofs >= Z->memory[i].size )
+			continue;
+
+		Z->memory[i].ptr[ofs] = value;
+		break;
+	}
 }
 
 uint16_t Read16( ZState *Z, uint16_t address )
@@ -141,20 +170,34 @@ uint8_t ReadPort( ZState *Z, uint16_t addr )
 {
 	for( int i = 0; i < Z->peripheralCount; i++ )
 	{
-		if( Z->peripherals[i].Read == NULL )
+		if( Z->peripheral[i].Read == NULL )
 			continue;
 
-		if( ( addr & Z->peripherals[i].mask ) == Z->peripherals[i].address )
-			return Z->peripherals[i].Read( Z, addr );
+		if( ( addr & Z->peripheral[i].mask ) == Z->peripheral[i].address )
+			return Z->peripheral[i].Read( Z, addr );
 	}
 
 	return 0x00;
 }
 
+void WritePort( ZState *Z, uint16_t addr, uint8_t value )
+{
+	for( int i = 0; i < Z->peripheralCount; i++ )
+	{
+		if( Z->peripheral[i].Write == NULL )
+			continue;
+
+		if( ( addr & Z->peripheral[i].mask ) == Z->peripheral[i].address )
+			return Z->peripheral[i].Write( Z, addr, value );
+	}
+}
+
+
 void PortOut( ZState *Z )
 {
-	uint8_t port = ReadPC8( Z );
-	ASM_PRINT( "OUT: (%02x) <- %02x\n", port, Z->reg.A );
+	uint16_t addr = ( Z->reg.A << 8 ) | ReadPC8( Z );
+	ASM_PRINT( "OUT: (%04x) <- %02x\n", addr, Z->reg.A );
+	WritePort( Z, addr, Z->reg.A );
 }
 
 void PortIn( ZState *Z )
@@ -166,8 +209,9 @@ void PortIn( ZState *Z )
 
 void PortOutC( ZState *Z, uint8_t v )
 {
-	uint8_t port = Z->reg.C;
-	ASM_PRINT( "OUT: (%02x) <- %02x\n", port, v );
+	uint16_t port = Z->reg.BC;
+	WritePort( Z, port, v );
+	ASM_PRINT( "OUT: (%04x) <- %02x\n", port, v );
 }
 
 uint8_t PortInC( ZState *Z )
@@ -258,12 +302,16 @@ uint8_t AddWithCarry8( uint8_t a, uint8_t b, uint8_t *flags )
 	}
 
 	uint8_t cIns = a ^ result ^ b;
+	uint8_t hOut = ( cIns >> 4 ) & 1;
 	uint8_t overflow = ( cIns >> 7 ) ^ cOut;
 
-	*flags &= ~( M_V | M_C | M_Z | M_S );
-	*flags |= ( result & M_S ) | ( cOut << F_C ) | ( overflow << F_V );
+	*flags = 0;
+	*flags |= ( result & ( M_S | M_3 | M_5 ) ) | ( cOut << F_C ) | ( overflow << F_V );
 	if( result == 0 )
 		*flags |= M_Z;
+
+	if( hOut )
+		*flags |= M_H;
 
 	return result;
 }
@@ -272,12 +320,11 @@ uint8_t AddWithCarry8( uint8_t a, uint8_t b, uint8_t *flags )
 void AdcA( ZState *Z, uint8_t b )
 {
 	Z->reg.A = AddWithCarry8( Z->reg.A, b, &Z->reg.F );
-	Z->reg.F &= ~M_N;
 }
 
 void AddA( ZState *Z, uint8_t b )
 {
-	Z->reg.F &= ~( M_N | M_C );
+	Z->reg.F &= ~M_C;
 	Z->reg.A = AddWithCarry8( Z->reg.A, b, &Z->reg.F );
 }
 
@@ -291,15 +338,18 @@ void SbcA( ZState *Z, uint8_t b )
 
 void SubA( ZState *Z, uint8_t b )
 {
-	Z->reg.F |= ( M_N | M_C );
+	Z->reg.F |= M_C;
 	Z->reg.A = AddWithCarry8( Z->reg.A, ~b, &Z->reg.F );
+	Z->reg.F ^= M_C;
+	Z->reg.F |= M_N;
 }
 
 void NegateA( ZState *Z )
 {
-	Z->reg.F |= ( M_N | M_C );
+	Z->reg.F |= M_C;
 	Z->reg.A = AddWithCarry8( 0, ~Z->reg.A, &Z->reg.F );
 	Z->reg.F ^= M_C;
+	Z->reg.F |= M_N;
 }
 
 void AddToIndex( ZState *Z, uint8_t high, uint8_t low )
@@ -308,8 +358,8 @@ void AddToIndex( ZState *Z, uint8_t high, uint8_t low )
 	Z->rIdx->l = AddWithCarry8( Z->rIdx->l, low, &flags );
 	Z->rIdx->h = AddWithCarry8( Z->rIdx->h, high, &flags );
 
-	flags &= M_C | M_H;
-	Z->reg.F &= ~( M_C | M_H );
+	flags &= M_C | M_H | M_3 | M_5;
+	Z->reg.F &= ~( M_C | M_H | M_3 | M_5 );
 	Z->reg.F |= flags;
 }
 
@@ -503,8 +553,6 @@ void ExecCB( ZState *Z )
 		};
 	}
 
-	ASM_PRINT( "CB %s\n", g_cbNames[op] );
-
 	switch( op )
 	{
 		case RLC:
@@ -605,8 +653,12 @@ void ExecCB( ZState *Z )
 		case SET_5: operand |= ( 1 << 5 ); break;
 		case SET_6: operand |= ( 1 << 6 ); break;
 		case SET_7: operand |= ( 1 << 7 ); break;
-	}
 
+		default:
+			assert( 0 );
+			break;
+	}
+	
 	if( Z->idx != R_HL )
 	{
 		WriteIndex( Z, operand );
@@ -796,13 +848,20 @@ void Exec( ZState *Z )
 		case DEC_A: Z->reg.A = Decrement8( Z, Z->reg.A ); break;
 		case DEC_RHL: ReadDisp( Z ); WriteIndex( Z, Decrement8( Z, ReadIndex( Z ) ) ); break;
 
+		case RLCA:
+			Z->reg.F &= ~( M_N | M_H | M_C );
+			u8Temp = ( Z->reg.A >> 7 ) & 1;
+			Z->reg.A <<= 1;
+			Z->reg.A |= u8Temp;
+			Z->reg.F |= u8Temp << F_C;
+			break;
+
 		case RRCA:
 			Z->reg.F &= ~( M_N | M_H | M_C );
 			u8Temp = Z->reg.A & 1;
 			Z->reg.A >>= 1;
 			Z->reg.A |= u8Temp << 7;
 			Z->reg.F |= u8Temp << F_C;
-			SetZeroSignParity( Z, Z->reg.A );
 			break;
 
 		case RRA:
@@ -811,12 +870,24 @@ void Exec( ZState *Z )
 			Z->reg.F |= ( Z->reg.A & 1 ) << F_C;
 			Z->reg.A >>= 1;
 			Z->reg.A |= u8Temp << 7;
-			SetZeroSignParity( Z, Z->reg.A );
 			break;
+
+		case RLA:
+			u8Temp = ( Z->reg.F >> F_C ) & 1;
+			Z->reg.F &= ~( M_N | M_H | M_C );
+			Z->reg.F |= ( ( Z->reg.A >> 7 ) & 1 ) << F_C;
+			Z->reg.A <<= 1;
+			Z->reg.F |= u8Temp;
+			break;
+
 
 		case CPL: Z->reg.A = ~Z->reg.A; Z->reg.F |= ( M_N | M_H ); break;
 		case SCF: Z->reg.F |= M_C; Z->reg.F &= ~( M_N | M_H ); break;
-		case CCF: Z->reg.F &= ~( M_C | M_N ); break;
+		case CCF:
+			Z->reg.F &= ~( M_H | M_N );
+			Z->reg.F |= ( ( Z->reg.F >> F_C ) & 1 ) << F_H;
+			Z->reg.F ^= M_C;
+			break;
 
 		case ADD_HL_BC: AddToIndex( Z, Z->reg.B, Z->reg.C ); break;
 		case ADD_HL_DE: AddToIndex( Z, Z->reg.D, Z->reg.E ); break;
@@ -1029,25 +1100,21 @@ void Z80_NonMaskableInterrupt( ZState *Z )
 	Z->NMI = 1;
 }
 
-void Z80_Reset( ZState *Z )
+void Z80_Init( ZState *Z )
 {
 	memset( Z, 0, sizeof( ZState ) );
 }
 
-void Z80_InitSpectrum( ZState *Z )
+void Z80_Reset( ZState *Z )
 {
-	Z80_Reset( Z );
+	memset( &Z->reg, 0, sizeof( Z->reg ) );
+	memset( &Z->sreg, 0, sizeof( Z->sreg ) );
 
-	FILE *fp = fopen( "roms/48.rom", "rb" );
-	if( fp == NULL )
-	{
-		printf( "Could not read rom file\n" );
-		abort();
-	}
-
-	fread( Z->mem, 16 * 1024, 1, fp );
-	fclose( fp );
+	Z->INT = 0;
+	Z->NMI = 0;
+	Z->IFF0 = 0;
 }
+
 
 void Z80_Run( ZState *Z, int cycles )
 {

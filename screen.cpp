@@ -45,6 +45,8 @@ static const KeyMapping s_keymap[] =
 {
 	{ SDLK_RSHIFT, SK_SHIFT },
 	{ SDLK_LSHIFT, SK_SHIFT },
+	{ SDLK_LCTRL, SK_SYM },
+	{ SDLK_RCTRL, SK_SYM },
 	{ SDLK_RETURN, SK_ENTER },
 	{ SDLK_SPACE, SK_SPACE },
 	{ SDLK_a, SK_A },
@@ -137,13 +139,13 @@ void Screen_UpdateScanline( ZState *Z, int scanline )
 {
 }
 
-void Screen_UpdateFrame( ZState *Z )
+void Screen_UpdateFrame( uint8_t *mem )
 {
 	SDL_LockSurface( s_surface );
 	for( int y = 0; y < 192; y++ )
 	{
 		int srcY = ( ( y >> 3 ) & 7 ) | ( ( y & 7 ) << 3 ) | ( y & ( 3 << 6 ) );
-		uint8_t *src = &Z->mem[0x4000] + ( srcY * 32 );
+		uint8_t *src = mem + ( srcY * 32 );
 		uint32_t *dest = ((uint32_t *)s_surface->pixels) + ( y * s_surface->w );
 
 		for( int x = 0; x < 256; x += 8 )

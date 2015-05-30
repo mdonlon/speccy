@@ -97,9 +97,22 @@ struct ZPeripheral
 	void (*Write)( ZState *, uint16_t, uint8_t );
 };
 
+enum ZMemoryType
+{
+	MEM_ROM,
+	MEM_RAM,
+};
+
+struct ZMemory
+{
+	ZMemoryType type;
+	uint16_t base;
+	uint32_t size;
+	uint8_t *ptr;
+};
+
 struct ZState
 {
-	uint8_t mem[64 * 1024];
 	RegisterSet reg;
 	RegisterSet sreg;
 
@@ -117,11 +130,14 @@ struct ZState
 	bool halted;
 
 	int peripheralCount;
-	ZPeripheral peripherals[8];
+	ZPeripheral peripheral[8];
+
+	int memoryCount;
+	ZMemory memory[8];
 };
 
 void Z80_Reset( ZState *Z );
-void Z80_InitSpectrum( ZState *Z );
+void Z80_Init( ZState *Z );
 void Z80_Run( ZState *Z, int cycles );
 void Z80_MaskableInterrupt( ZState *Z );
 void Z80_NonMaskableInterrupt( ZState *Z );

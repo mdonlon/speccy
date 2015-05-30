@@ -18,8 +18,8 @@ struct SpeccyKeyState
 	uint8_t row[8];
 };
 
-#define SK_ROW(sk) ((sk) >> 5)
-#define SK_BIT(sk) ((sk) & 0x1f)
+#define SK_ROW(sk) ((sk) / 5)
+#define SK_BIT(sk) ((sk) % 5)
 #define SK_MASK(sk) (1 << SK_BIT((sk)))
 
 #endif // SPECCY_H
