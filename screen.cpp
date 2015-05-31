@@ -16,8 +16,8 @@ bool Screen_Init()
 		return false;
 	}
 
-	s_window = SDL_CreateWindow( "Speccy", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, 256, 192, SDL_WINDOW_SHOWN );
-	s_surface = SDL_CreateRGBSurface( 0, 256, 192, 32, 0, 0, 0, 0 );
+	s_window = SDL_CreateWindow( "Speccy", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN );
+	s_surface = SDL_CreateRGBSurface( 0, SCREEN_WIDTH, SCREEN_HEIGHT, 32, 0, 0, 0, 0 );
 	s_quitRequested = false;
 
 	return true;
@@ -135,21 +135,40 @@ void Screen_PollInput( SpeccyKeyState *keyState )
 	}
 }
 
-void Screen_UpdateScanline( ZState *Z, int scanline )
+void Screen_UpdateScanline( int scanline, const uint8_t *mem )
 {
-}
+	if( scanline < VBLANK_HEIGHT )
+		return;
 
-void Screen_UpdateFrame( uint8_t *mem )
-{
+	const int y = scanline - VBLANK_HEIGHT;
+	const int sy = scanline - ( VBLANK_HEIGHT + TOP_BORDER_HEIGHT );
+	
 	SDL_LockSurface( s_surface );
-	for( int y = 0; y < 192; y++ )
-	{
-		int srcY = ( ( y >> 3 ) & 7 ) | ( ( y & 7 ) << 3 ) | ( y & ( 3 << 6 ) );
-		uint8_t *src = mem + ( srcY * 32 );
-		uint32_t *dest = ((uint32_t *)s_surface->pixels) + ( y * s_surface->w );
+	
+	uint32_t *dest = ((uint32_t *)s_surface->pixels) + ( y * s_surface->w );
 
-		for( int x = 0; x < 256; x += 8 )
+	for( int x = 0; x < BORDER_WIDTH; x++ )
+	{
+		*dest = 0xffffffff;
+		dest++;
+	}
+
+	if( sy < 0 || sy >= PIXEL_HEIGHT )
+	{
+		for( int x = 0; x < PIXEL_WIDTH; x++ )
 		{
+			*dest = 0xffffffff;
+			dest++;
+		}
+	}
+	else
+	{
+		const int srcY = ( ( sy >> 3 ) & 7 ) | ( ( sy & 7 ) << 3 ) | ( sy & ( 3 << 6 ) );
+		const uint8_t *src = mem + ( srcY * 32 );
+
+		for( int x = 0; x < PIXEL_WIDTH; x+=8 )
+		{
+
 			for( int b = 7; b >= 0; b-- )
 			{
 				if( *src & ( 1 << b ) )
@@ -165,9 +184,20 @@ void Screen_UpdateFrame( uint8_t *mem )
 			src++;
 		}
 	}
+
+	for( int x = 0; x < BORDER_WIDTH; x++ )
+	{
+		*dest = 0xffffffff;
+		dest++;
+	}
+
+
 	SDL_UnlockSurface( s_surface );
 
+}
 
+void Screen_UpdateFrame()
+{
 	SDL_Surface *windowSurface = SDL_GetWindowSurface( s_window );
 	SDL_BlitSurface( s_surface, NULL, windowSurface, NULL );
 	SDL_UpdateWindowSurface( s_window );

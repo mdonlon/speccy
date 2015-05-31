@@ -60,13 +60,13 @@ int main( int argc, char *argv[] )
 		Screen_PollInput( &s_keyState );
 		int scanline = 0;
 
-		for( int scanline = 0; scanline < 312; scanline++ )
+		for( int scanline = 0; scanline < SCREEN_HEIGHT + VBLANK_HEIGHT; scanline++ )
 		{
-			Screen_UpdateScanline( &Z, scanline );
+			Screen_UpdateScanline( scanline, ram );
 			Z80_Run( &Z, 224 );
 		}
 
-		Screen_UpdateFrame( ram );
+		Screen_UpdateFrame();
 		Z80_MaskableInterrupt( &Z );
 	}
 

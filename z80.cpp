@@ -6,15 +6,15 @@
 
 #include "screen.h"
 
-//#define ASM_PRINT printf
-//#define MEM_PRINT printf
-//#define REG_PRINT printf
-//#define DBG_PRINT printf
+#define ASM_PRINT printf
+#define MEM_PRINT printf
+#define REG_PRINT printf
+#define DBG_PRINT printf
 
-#define ASM_PRINT(...) (void)0
-#define MEM_PRINT(...) (void)0
-#define REG_PRINT(...) (void)0
-#define DBG_PRINT(...) (void)0
+//#define ASM_PRINT(...) (void)0
+//#define MEM_PRINT(...) (void)0
+//#define REG_PRINT(...) (void)0
+//#define DBG_PRINT(...) (void)0
 
 /* UTILITY */
 const char *FlagString( uint8_t f )
@@ -50,20 +50,14 @@ uint8_t Read8( ZState *Z, uint16_t address )
 		break;
 	}
 
-	if( address == 0x5c3b )
-	{
-		MEM_PRINT( "Read 0x%04x -> 0x%02x\n", address, value );
-	}
+	MEM_PRINT( "Read 0x%04x -> 0x%02x\n", address, value );
 
 	return value;
 }
 
 void Write8( ZState *Z, uint16_t address, uint8_t value )
 {
-	if( address == 0x5c3b )
-	{
-		MEM_PRINT( "Write 0x%04x <- 0x%02x\n", address, value );
-	}
+	MEM_PRINT( "Write 0x%04x <- 0x%02x\n", address, value );
 	for( int i = 0; i < Z->memoryCount; i++ )
 	{
 		if( Z->memory[i].type == MEM_ROM )
