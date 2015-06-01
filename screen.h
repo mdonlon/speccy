@@ -9,7 +9,7 @@ void Screen_Shutdown();
 
 bool Screen_Continue();
 void Screen_PollInput( SpeccyKeyState *keyState );
-void Screen_UpdateScanline( int scanline, const uint8_t *mem );
+void Screen_UpdateScanline( uint8_t frame, int scanline, const uint8_t *mem, uint8_t borderIndex );
 void Screen_UpdateFrame();
 
 #endif // SCREEN_H

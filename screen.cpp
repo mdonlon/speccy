@@ -8,6 +8,32 @@ static SDL_Window *s_window;
 static SDL_Surface *s_surface;
 static bool s_quitRequested = false;
 
+const static SDL_Color s_colors[2][8] =
+{
+	{
+		{ 0x00, 0x00, 0x00 },
+		{ 0x00, 0x00, 0xcd },
+		{ 0xcd, 0x00, 0x00 },
+		{ 0xcd, 0x00, 0xcd },
+		{ 0x00, 0xcd, 0x00 },
+		{ 0x00, 0xcd, 0xcd },
+		{ 0xcd, 0xcd, 0x00 },
+		{ 0xcd, 0xcd, 0xcd },
+	},
+	{
+		{ 0x00, 0x00, 0x00 },
+		{ 0x00, 0x00, 0xff },
+		{ 0xff, 0x00, 0x00 },
+		{ 0xff, 0x00, 0xff },
+		{ 0x00, 0xff, 0x00 },
+		{ 0x00, 0xff, 0xff },
+		{ 0xff, 0xff, 0x00 },
+		{ 0xff, 0xff, 0xff },
+	},
+};
+
+#define SCALE 2
+
 bool Screen_Init()
 {
 	if( SDL_Init( SDL_INIT_VIDEO ) < 0 )
@@ -16,7 +42,7 @@ bool Screen_Init()
 		return false;
 	}
 
-	s_window = SDL_CreateWindow( "Speccy", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH, SCREEN_HEIGHT, SDL_WINDOW_SHOWN );
+	s_window = SDL_CreateWindow( "Speccy", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, SCREEN_WIDTH * SCALE, SCREEN_HEIGHT * SCALE, SDL_WINDOW_SHOWN );
 	s_surface = SDL_CreateRGBSurface( 0, SCREEN_WIDTH, SCREEN_HEIGHT, 32, 0, 0, 0, 0 );
 	s_quitRequested = false;
 
@@ -135,13 +161,16 @@ void Screen_PollInput( SpeccyKeyState *keyState )
 	}
 }
 
-void Screen_UpdateScanline( int scanline, const uint8_t *mem )
+void Screen_UpdateScanline( uint8_t frame, int scanline, const uint8_t *mem, uint8_t borderIndex )
 {
 	if( scanline < VBLANK_HEIGHT )
 		return;
 
 	const int y = scanline - VBLANK_HEIGHT;
 	const int sy = scanline - ( VBLANK_HEIGHT + TOP_BORDER_HEIGHT );
+			
+	const SDL_Color *borderColor = &s_colors[0][borderIndex];
+	uint32_t border = SDL_MapRGB( s_surface->format, borderColor->r, borderColor->g, borderColor->b );
 	
 	SDL_LockSurface( s_surface );
 	
@@ -149,7 +178,7 @@ void Screen_UpdateScanline( int scanline, const uint8_t *mem )
 
 	for( int x = 0; x < BORDER_WIDTH; x++ )
 	{
-		*dest = 0xffffffff;
+		*dest = border;
 		dest++;
 	}
 
@@ -157,7 +186,7 @@ void Screen_UpdateScanline( int scanline, const uint8_t *mem )
 	{
 		for( int x = 0; x < PIXEL_WIDTH; x++ )
 		{
-			*dest = 0xffffffff;
+			*dest = border;
 			dest++;
 		}
 	}
@@ -165,29 +194,43 @@ void Screen_UpdateScanline( int scanline, const uint8_t *mem )
 	{
 		const int srcY = ( ( sy >> 3 ) & 7 ) | ( ( sy & 7 ) << 3 ) | ( sy & ( 3 << 6 ) );
 		const uint8_t *src = mem + ( srcY * 32 );
+		const uint8_t *attr = mem + ( PIXEL_HEIGHT * 32 ) + ( ( sy >> 3 ) * 32 );
 
 		for( int x = 0; x < PIXEL_WIDTH; x+=8 )
 		{
+			int8_t flash = ( frame << 4 ) & *attr;
+			flash >>= 7;
 
+			uint8_t attrInk = ( *attr ^ flash ) & 0x7;
+			uint8_t attrPaper = ( ( *attr ^ flash ) >> 3 ) & 0x7;
+			uint8_t attrBright = ( *attr >> 6 ) & 0x1;
+			uint8_t attrFlash = ( *attr >> 7 ) & 0x1;
+
+			const SDL_Color *inkColor = &s_colors[attrBright][attrInk];
+			const SDL_Color *paperColor = &s_colors[attrBright][attrPaper];
+
+			uint32_t ink = SDL_MapRGB( s_surface->format, inkColor->r, inkColor->g, inkColor->b );
+			uint32_t paper = SDL_MapRGB( s_surface->format, paperColor->r, paperColor->g, paperColor->b );
 			for( int b = 7; b >= 0; b-- )
 			{
 				if( *src & ( 1 << b ) )
 				{
-					*dest = 0x00000000;
+					*dest = ink;
 				}
 				else
 				{
-					*dest = 0xffffffff;
+					*dest = paper;
 				}
 				dest++;
 			}
 			src++;
+			attr++;
 		}
 	}
 
 	for( int x = 0; x < BORDER_WIDTH; x++ )
 	{
-		*dest = 0xffffffff;
+		*dest = border;
 		dest++;
 	}
 
@@ -199,7 +242,7 @@ void Screen_UpdateScanline( int scanline, const uint8_t *mem )
 void Screen_UpdateFrame()
 {
 	SDL_Surface *windowSurface = SDL_GetWindowSurface( s_window );
-	SDL_BlitSurface( s_surface, NULL, windowSurface, NULL );
+	SDL_BlitScaled( s_surface, NULL, windowSurface, NULL );
 	SDL_UpdateWindowSurface( s_window );
 }
 

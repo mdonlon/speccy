@@ -2,7 +2,8 @@
 #include "screen.h"
 #include "speccy.h"
 
-SpeccyKeyState s_keyState;
+static SpeccyKeyState s_keyState;
+static uint8_t s_ula;
 
 uint8_t ULARead( ZState *Z, uint16_t addr )
 {
@@ -13,6 +14,12 @@ uint8_t ULARead( ZState *Z, uint16_t addr )
 	}
 	return 0x00;
 }
+
+void ULAWrite( ZState *Z, uint16_t addr, uint8_t value )
+{
+	s_ula = value;
+}
+
 
 int main( int argc, char *argv[] )
 {
@@ -49,11 +56,14 @@ int main( int argc, char *argv[] )
 	Z.peripheral[0].mask = 0x0001;
 	Z.peripheral[0].address = 0x0000;
 	Z.peripheral[0].Read = ULARead;
+	Z.peripheral[0].Write = ULAWrite;
 	Z.peripheralCount = 1;
 
 	Z80_Reset( &Z );
 
 	memset( &s_keyState, 0xff, sizeof( s_keyState ) );
+
+	uint8_t frame = 0;
 
 	while( Screen_Continue() )
 	{
@@ -62,10 +72,10 @@ int main( int argc, char *argv[] )
 
 		for( int scanline = 0; scanline < SCREEN_HEIGHT + VBLANK_HEIGHT; scanline++ )
 		{
-			Screen_UpdateScanline( scanline, ram );
+			Screen_UpdateScanline( frame, scanline, ram, s_ula & 0x7 );
 			Z80_Run( &Z, 224 );
 		}
-
+		frame++;
 		Screen_UpdateFrame();
 		Z80_MaskableInterrupt( &Z );
 	}
