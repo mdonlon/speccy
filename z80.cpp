@@ -462,23 +462,28 @@ void JumpRelative( ZState *Z, uint8_t cond )
 
 void Compare( ZState *Z, uint8_t v )
 {
-	uint8_t flag = v & ( M_3 | M_5 );
-
-	const uint16_t r16 = (uint16_t)Z->reg.A - (uint16_t)v;
-	const uint8_t r8 = (uint8_t)r16;
-
-	flag |= M_N;
-	flag |= r8 & M_S;
-
-	if( r8 == 0 )
-		flag |= M_Z;
-
-	if( r16 & 0x100 )
-		flag |= M_C;
-
-	Z->reg.F = flag;
+	uint8_t flags = M_C;
+	AddWithCarry8( Z->reg.A, ~v, &flags );
+	flags ^= M_C | M_H;
+	flags &= ~( M_3 | M_5 );
+	flags |= v & ( M_3 | M_5 );
+	flags |= M_N;
+	Z->reg.F = flags;
 }
 
+void BitTest( ZState *Z, int bit, uint8_t v )
+{
+	Z->reg.F |= M_H;
+	Z->reg.F &= ~( M_N | M_Z | M_S | M_P );
+
+	uint8_t mask = 1 << bit;
+
+	Z->reg.F |= M_S & mask & v;
+
+	if( ( v & mask ) == 0 )
+		Z->reg.F |= M_Z | M_P;
+}
+	
 void Exchange( ZState *Z )
 {
 	RegisterSet r;
@@ -539,6 +544,7 @@ void ExecCB( ZState *Z )
 	uint8_t operand;
 	uint8_t carryIn, carryOut;
 	bool copyOperand = false;
+	uint8_t tempu8;
 
 	if( Z->idx != R_HL )
 	{
@@ -634,15 +640,14 @@ void ExecCB( ZState *Z )
 			SetZeroSignParity( Z, operand );
 			break;
 
-#define BIT_TEST(x) do { copyOperand = false; Z->reg.F |= M_H; Z->reg.F &= ~( M_N | M_Z ); if( ( operand & ( 1 << (x) ) ) == 0 ) Z->reg.F |= M_Z; } while( 0 )
-		case BIT_0: BIT_TEST( 0 ); break;
-		case BIT_1: BIT_TEST( 1 ); break;
-		case BIT_2: BIT_TEST( 2 ); break;
-		case BIT_3: BIT_TEST( 3 ); break;
-		case BIT_4: BIT_TEST( 4 ); break;
-		case BIT_5: BIT_TEST( 5 ); break;
-		case BIT_6: BIT_TEST( 6 ); break;
-		case BIT_7: BIT_TEST( 7 ); break;
+		case BIT_0: copyOperand = false; BitTest( Z, 0, operand ); break;
+		case BIT_1: copyOperand = false; BitTest( Z, 1, operand ); break;
+		case BIT_2: copyOperand = false; BitTest( Z, 2, operand ); break;
+		case BIT_3: copyOperand = false; BitTest( Z, 3, operand ); break;
+		case BIT_4: copyOperand = false; BitTest( Z, 4, operand ); break;
+		case BIT_5: copyOperand = false; BitTest( Z, 5, operand ); break;
+		case BIT_6: copyOperand = false; BitTest( Z, 6, operand ); break;
+		case BIT_7: copyOperand = false; BitTest( Z, 7, operand ); break;
 
 		case RES_0: operand &= ~( 1 << 0 ); break;
 		case RES_1: operand &= ~( 1 << 1 ); break;
@@ -691,6 +696,7 @@ void ExecCB( ZState *Z )
 void ExecED( ZState *Z )
 {
 	uint8_t op = ReadPC8( Z );
+	uint8_t tempu8;
 	
 	ASM_PRINT( "ED %s\n", g_edNames[op] );
 
@@ -716,7 +722,6 @@ void ExecED( ZState *Z )
 		case LDI: Ldi( Z ); break;
 		case LDIR: if( !Ldi( Z ) ) Z->reg.PC -= 2; break;
 
-
 		case ADC_HL_BC: AdcToIndex( Z, Z->reg.B, Z->reg.C ); break;
 		case ADC_HL_DE: AdcToIndex( Z, Z->reg.D, Z->reg.E ); break;
 		case ADC_HL_HL: AdcToIndex( Z, Z->reg.H, Z->reg.L ); break;
@@ -737,6 +742,25 @@ void ExecED( ZState *Z )
 		case IN_L_RC: Z->reg.L = PortInC( Z ); IN_FLAGS( Z->reg.L ); break;
 
 		case NEG: NegateA( Z ); break;
+
+		case RRD:
+			tempu8 = ReadIndex( Z );
+			WriteIndex( Z, ( tempu8 >> 4 ) | ( Z->reg.A << 4 ) );
+			Z->reg.A = ( Z->reg.A & 0xf0 ) | ( tempu8 & 0x0f );
+			Z->reg.F &= ~( M_N | M_H );
+			SetF35( Z, Z->reg.A );
+			SetZeroSignParity( Z, Z->reg.A );
+			break;
+
+		case RLD:
+			tempu8 = ReadIndex( Z );
+			WriteIndex( Z, ( tempu8 << 4 ) | ( Z->reg.A & 0x0f ) );
+			Z->reg.A = ( Z->reg.A & 0xf0 ) | ( ( tempu8 >> 4 ) & 0x0f );
+			Z->reg.F &= ~( M_N | M_H );
+			SetF35( Z, Z->reg.A );
+			SetZeroSignParity( Z, Z->reg.A );
+			break;
+
 
 		default:
 			printf( "Unimplemented ED opcode 0x%02x: %s\n", op, g_edNames[op] );
@@ -862,6 +886,7 @@ void Exec( ZState *Z )
 			Z->reg.A <<= 1;
 			Z->reg.A |= u8Temp;
 			Z->reg.F |= u8Temp << F_C;
+			SetF35( Z, Z->reg.A );
 			break;
 
 		case RRCA:
@@ -870,6 +895,7 @@ void Exec( ZState *Z )
 			Z->reg.A >>= 1;
 			Z->reg.A |= u8Temp << 7;
 			Z->reg.F |= u8Temp << F_C;
+			SetF35( Z, Z->reg.A );
 			break;
 
 		case RRA:
@@ -878,6 +904,7 @@ void Exec( ZState *Z )
 			Z->reg.F |= ( Z->reg.A & 1 ) << F_C;
 			Z->reg.A >>= 1;
 			Z->reg.A |= u8Temp << 7;
+			SetF35( Z, Z->reg.A );
 			break;
 
 		case RLA:
@@ -885,7 +912,8 @@ void Exec( ZState *Z )
 			Z->reg.F &= ~( M_N | M_H | M_C );
 			Z->reg.F |= ( ( Z->reg.A >> 7 ) & 1 ) << F_C;
 			Z->reg.A <<= 1;
-			Z->reg.F |= u8Temp;
+			Z->reg.A |= u8Temp;
+			SetF35( Z, Z->reg.A );
 			break;
 
 
