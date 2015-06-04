@@ -20,6 +20,43 @@ void ULAWrite( ZState *Z, uint16_t addr, uint8_t value )
 	s_ula = value;
 }
 
+void ReadSNA( ZState *Z, const char *name, uint8_t *ram )
+{
+	FILE *fp = fopen( name, "rb" );
+	fread( &Z->reg.I, 1, 1, fp );
+	fread( &Z->sreg.HL, 2, 1, fp );
+	fread( &Z->sreg.DE, 2, 1, fp );
+	fread( &Z->sreg.BC, 2, 1, fp );
+	fread( &Z->sreg.AF, 2, 1, fp );
+
+	fread( &Z->reg.HL, 2, 1, fp );
+	fread( &Z->reg.DE, 2, 1, fp );
+	fread( &Z->reg.BC, 2, 1, fp );
+	fread( &Z->reg.IY, 2, 1, fp );
+	fread( &Z->reg.IX, 2, 1, fp );
+
+	uint8_t iff;
+	fread( &iff, 1, 1, fp );
+	Z->IFF0 = iff & 1 ? 1 : 0;
+	Z->IFF1 = iff & 2 ? 1 : 0;
+	Z->NMI = 0;
+	Z->INT = 0;
+
+	fread( &Z->reg.R, 1, 1, fp );
+	fread( &Z->reg.AF, 2, 1, fp );
+	fread( &Z->reg.SP, 2, 1, fp );
+	
+	fread( &iff, 1, 1, fp );
+
+	Z->IMODE = iff;
+
+	fread( &iff, 1, 1, fp );
+
+	fread( ram, 49152, 1, fp );
+
+	fclose( fp );
+}
+
 
 int main( int argc, char *argv[] )
 {
@@ -60,6 +97,9 @@ int main( int argc, char *argv[] )
 	Z.peripheralCount = 1;
 
 	Z80_Reset( &Z );
+
+//	ReadSNA( &Z, "roms/jetpac.sna", ram );
+//	Z80_SnapshotResume( &Z );
 
 	memset( &s_keyState, 0xff, sizeof( s_keyState ) );
 

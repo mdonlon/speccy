@@ -473,6 +473,7 @@ void Compare( ZState *Z, uint8_t v )
 
 void BitTest( ZState *Z, int bit, uint8_t v )
 {
+
 	Z->reg.F |= M_H;
 	Z->reg.F &= ~( M_N | M_Z | M_S | M_P );
 
@@ -501,26 +502,52 @@ void Exchange( ZState *Z )
 
 bool Ldd( ZState *Z )
 {
-	Write8( Z, Z->reg.DE, Read8( Z, Z->reg.HL ) );
+	uint8_t v = Read8( Z, Z->reg.HL );
+	Write8( Z, Z->reg.DE, v );
 	Z->reg.HL -= 1;
 	Z->reg.DE -= 1;
 	Z->reg.BC -= 1;
 
-	Z->reg.F &= ~( M_N | M_P | M_H );
+	v += Z->reg.A;
 
-	return Z->reg.BC == 0;
+	Z->reg.F &= ~( M_N | M_P | M_H | M_3 | M_5 );
+
+	Z->reg.F |= v & M_3;
+	Z->reg.F |= ( v << 4 ) & M_5;
+
+	if( Z->reg.BC == 0 )
+	{
+		return true;
+	}
+
+	Z->reg.F |= M_P;
+
+	return false;
 }
 
 bool Ldi( ZState *Z )
 {
-	Write8( Z, Z->reg.DE, Read8( Z, Z->reg.HL ) );
+	uint8_t v = Read8( Z, Z->reg.HL );
+	Write8( Z, Z->reg.DE, v );
 	Z->reg.HL += 1;
 	Z->reg.DE += 1;
 	Z->reg.BC -= 1;
 
-	Z->reg.F &= ~( M_N | M_P | M_H );
+	v += Z->reg.A;
 
-	return Z->reg.BC == 0;
+	Z->reg.F &= ~( M_N | M_P | M_H | M_3 | M_5 );
+
+	Z->reg.F |= v & M_3;
+	Z->reg.F |= ( v << 4 ) & M_5;
+
+	if( Z->reg.BC == 0 )
+	{
+		return true;
+	}
+
+	Z->reg.F |= M_P;
+
+	return false;
 }
 
 void SetIndexRegister( ZState *Z, IndexRegister idx )
@@ -565,6 +592,7 @@ void ExecCB( ZState *Z )
 			case OP_REG_INDEX: operand = ReadIndex( Z ); break;
 			case OP_REG_A: operand = Z->reg.A; break;
 		};
+		copyOperand = true;
 	}
 
 	switch( op )
@@ -576,6 +604,7 @@ void ExecCB( ZState *Z )
 			operand |= carryOut;
 			Z->reg.F |= carryOut << F_C;
 			SetZeroSignParity( Z, operand );
+			SetF35( Z, operand );
 			break;
 
 		case RRC:
@@ -585,6 +614,7 @@ void ExecCB( ZState *Z )
 			operand |= carryOut << 7;
 			Z->reg.F |= carryOut << F_C;
 			SetZeroSignParity( Z, operand );
+			SetF35( Z, operand );
 			break;
 
 		case RL:
@@ -595,6 +625,7 @@ void ExecCB( ZState *Z )
 			operand |= carryIn;
 			Z->reg.F |= carryOut << F_C;
 			SetZeroSignParity( Z, operand );
+			SetF35( Z, operand );
 			break;
 
 		case RR:
@@ -605,6 +636,7 @@ void ExecCB( ZState *Z )
 			operand |= carryIn << 7;
 			Z->reg.F |= carryOut << F_C;
 			SetZeroSignParity( Z, operand );
+			SetF35( Z, operand );
 			break;
 
 		case SLA:
@@ -613,6 +645,7 @@ void ExecCB( ZState *Z )
 			operand <<= 1;
 			Z->reg.F |= carryOut << F_C;
 			SetZeroSignParity( Z, operand );
+			SetF35( Z, operand );
 			break;
 
 		case SRA:
@@ -621,6 +654,7 @@ void ExecCB( ZState *Z )
 			operand = (uint8_t)( ( (int8_t) operand ) >> 1 );
 			Z->reg.F |= carryOut << F_C;
 			SetZeroSignParity( Z, operand );
+			SetF35( Z, operand );
 			break;
 
 		case SLL:
@@ -630,6 +664,7 @@ void ExecCB( ZState *Z )
 			operand |= 1;
 			Z->reg.F |= carryOut << F_C;
 			SetZeroSignParity( Z, operand );
+			SetF35( Z, operand );
 			break;
 
 		case SRL:
@@ -638,6 +673,7 @@ void ExecCB( ZState *Z )
 			operand >>= 1;
 			Z->reg.F |= carryOut << F_C;
 			SetZeroSignParity( Z, operand );
+			SetF35( Z, operand );
 			break;
 
 		case BIT_0: copyOperand = false; BitTest( Z, 0, operand ); break;
@@ -677,7 +713,7 @@ void ExecCB( ZState *Z )
 		WriteIndex( Z, operand );
 	}
 
-	if( copyOperand || Z->idx == R_HL )
+	if( copyOperand )
 	{
 		switch( operandReg )
 		{
@@ -788,7 +824,7 @@ void Exec( ZState *Z )
 	switch( op )
 	{
 		case NOP: break;
-		case HALT: Z->halted = true; break;
+		case HALT: Z->reg.PC -= 1; break;
 		case DI: Z->IFF0 = 0; break;
 		case EI: Z->IFF0 = 1; break;
 
@@ -916,6 +952,22 @@ void Exec( ZState *Z )
 			SetF35( Z, Z->reg.A );
 			break;
 
+
+		case DAA:
+			if( ( Z->reg.A & 0x0f ) > 0x09 || ( ( Z->reg.F & M_H ) != 0 ) )
+				Z->reg.A += 0x06;
+			if( ( Z->reg.A & 0xf0 ) > 0x90 || ( ( Z->reg.F & M_C ) != 0 ) )
+			{
+				Z->reg.A += 0x60;
+				Z->reg.F |= M_C;
+			}
+			else
+			{
+				Z->reg.F &= ~M_C;
+			}
+			SetZeroSignParity( Z, Z->reg.A );
+			SetF35( Z, Z->reg.A );
+			break;
 
 		case CPL: Z->reg.A = ~Z->reg.A; Z->reg.F |= ( M_N | M_H ); break;
 		case SCF: Z->reg.F |= M_C; Z->reg.F &= ~( M_N | M_H ); break;
@@ -1157,6 +1209,11 @@ void Z80_Reset( ZState *Z )
 	Z->IFF0 = 0;
 }
 
+void Z80_SnapshotResume( ZState *Z )
+{
+	Z->IFF0 = Z->IFF1;
+	Z->reg.PC = Pop16( Z );
+}
 
 void Z80_Run( ZState *Z, int cycles )
 {
@@ -1174,7 +1231,14 @@ void Z80_Run( ZState *Z, int cycles )
 		Z->IFF0 = Z->IFF1 = 0;
 		Z->INT = 0;
 		Push16( Z, Z->reg.PC );
-		Z->reg.PC = 0x0038;
+		if( Z->IMODE == 1 )
+		{
+			Z->reg.PC = 0x0038;
+		}
+		else
+		{
+			Z->reg.PC = Z->reg.I << 8;
+		}
 	}
 
 	while( !Z->halted && ( cycles < 0 || cycles > cycleCount ) )

@@ -142,6 +142,8 @@ void Z80_Run( ZState *Z, int cycles );
 void Z80_MaskableInterrupt( ZState *Z );
 void Z80_NonMaskableInterrupt( ZState *Z );
 
+void Z80_SnapshotResume( ZState *Z );
+
 
 #endif // !defined( Z80_H )
 
