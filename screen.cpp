@@ -7,6 +7,7 @@
 static SDL_Window *s_window;
 static SDL_Surface *s_surface;
 static bool s_quitRequested = false;
+static uint32_t s_frameStart = 0;
 
 const static SDL_Color s_colors[2][8] =
 {
@@ -198,7 +199,7 @@ void Screen_UpdateScanline( uint8_t frame, int scanline, const uint8_t *mem, uin
 
 		for( int x = 0; x < PIXEL_WIDTH; x+=8 )
 		{
-			int8_t flash = ( frame << 4 ) & *attr;
+			int8_t flash = ( frame << 3 ) & *attr;
 			flash >>= 7;
 
 			uint8_t attrInk = ( *attr ^ flash ) & 0x7;
@@ -244,5 +245,12 @@ void Screen_UpdateFrame()
 	SDL_Surface *windowSurface = SDL_GetWindowSurface( s_window );
 	SDL_BlitScaled( s_surface, NULL, windowSurface, NULL );
 	SDL_UpdateWindowSurface( s_window );
+
+	uint32_t cur = SDL_GetTicks();
+	int delta = cur - s_frameStart;
+	if( delta < 20 )
+		SDL_Delay( 20 - delta );
+
+	s_frameStart = SDL_GetTicks();
 }
 

@@ -459,27 +459,32 @@ void JumpRelative( ZState *Z, uint8_t cond )
 	}
 }
 
+uint8_t CompareValues( uint8_t a, uint8_t b )
+{
+	uint8_t flags = M_C;
+	AddWithCarry8( a, ~b, &flags );
+	flags ^= M_C | M_H;
+	flags &= ~( M_3 | M_5 );
+	flags |= b & ( M_3 | M_5 );
+	flags |= M_N;
+	return flags;
+}
+
 
 void Compare( ZState *Z, uint8_t v )
 {
-	uint8_t flags = M_C;
-	AddWithCarry8( Z->reg.A, ~v, &flags );
-	flags ^= M_C | M_H;
-	flags &= ~( M_3 | M_5 );
-	flags |= v & ( M_3 | M_5 );
-	flags |= M_N;
-	Z->reg.F = flags;
+	Z->reg.F = CompareValues( Z->reg.A, v );
 }
 
-void BitTest( ZState *Z, int bit, uint8_t v )
+void BitTest( ZState *Z, int bit, uint8_t v, uint8_t flagMask )
 {
 
 	Z->reg.F |= M_H;
-	Z->reg.F &= ~( M_N | M_Z | M_S | M_P );
+	Z->reg.F &= ~( M_N | M_Z | M_P | flagMask );
 
 	uint8_t mask = 1 << bit;
 
-	Z->reg.F |= M_S & mask & v;
+	Z->reg.F |= flagMask & mask & v;
 
 	if( ( v & mask ) == 0 )
 		Z->reg.F |= M_Z | M_P;
@@ -550,6 +555,63 @@ bool Ldi( ZState *Z )
 	return false;
 }
 
+bool Cpd( ZState *Z )
+{
+	uint8_t v = Read8( Z, Z->reg.HL );
+	Z->reg.HL -= 1;
+	Z->reg.BC -= 1;
+
+	uint8_t cflags = CompareValues( Z->reg.A, v );
+
+	Z->reg.F &= ~( M_S | M_Z | M_P | M_H | M_3 | M_5 );
+	Z->reg.F |= M_N | ( cflags & ( M_S | M_Z | M_H ) );
+
+	uint8_t H = ( cflags >> F_H ) & 1;
+
+	uint8_t c = Z->reg.A - v - H;
+	Z->reg.F |= c & M_3;
+	Z->reg.F |= ( c << 4 ) & M_5;
+
+	if( Z->reg.BC != 0 )
+	{
+		Z->reg.F |= M_P;
+	}
+
+	if( Z->reg.BC || ( Z->reg.F & M_Z ) )
+		return true;
+
+	return false;
+}
+
+bool Cpi( ZState *Z )
+{
+	uint8_t v = Read8( Z, Z->reg.HL );
+	Z->reg.HL += 1;
+	Z->reg.BC -= 1;
+
+	uint8_t cflags = CompareValues( Z->reg.A, v );
+
+	Z->reg.F &= ~( M_S | M_Z | M_P | M_H | M_3 | M_5 );
+	Z->reg.F |= M_N | ( cflags & ( M_S | M_Z | M_H ) );
+
+	uint8_t H = ( cflags >> F_H ) & 1;
+
+	uint8_t c = Z->reg.A - v - H;
+	Z->reg.F |= c & M_3;
+	Z->reg.F |= ( c << 4 ) & M_5;
+
+	if( Z->reg.BC != 0 )
+	{
+		Z->reg.F |= M_P;
+	}
+
+	if( Z->reg.BC || ( Z->reg.F & M_Z ) )
+		return true;
+
+	return false;
+}
+
+
 void SetIndexRegister( ZState *Z, IndexRegister idx )
 {
 	assert( idx == R_HL || idx == R_IX || idx == R_IY );
@@ -572,10 +634,14 @@ void ExecCB( ZState *Z )
 	uint8_t carryIn, carryOut;
 	bool copyOperand = false;
 	uint8_t tempu8;
+	uint8_t flagMask = M_S | M_3 | M_5;
+
+	ASM_PRINT( "CB %s\n", g_cbNames[op] );
 
 	if( Z->idx != R_HL )
 	{
 		operand = ReadIndex( Z );
+		flagMask = M_S;
 		if( operandReg != OP_REG_INDEX )
 			copyOperand = true;
 	}
@@ -589,7 +655,7 @@ void ExecCB( ZState *Z )
 			case OP_REG_E: operand = Z->reg.E; break;
 			case OP_REG_H: operand = Z->reg.H; break;
 			case OP_REG_L: operand = Z->reg.L; break;
-			case OP_REG_INDEX: operand = ReadIndex( Z ); break;
+			case OP_REG_INDEX: flagMask = M_S; operand = ReadIndex( Z ); break;
 			case OP_REG_A: operand = Z->reg.A; break;
 		};
 		copyOperand = true;
@@ -676,14 +742,14 @@ void ExecCB( ZState *Z )
 			SetF35( Z, operand );
 			break;
 
-		case BIT_0: copyOperand = false; BitTest( Z, 0, operand ); break;
-		case BIT_1: copyOperand = false; BitTest( Z, 1, operand ); break;
-		case BIT_2: copyOperand = false; BitTest( Z, 2, operand ); break;
-		case BIT_3: copyOperand = false; BitTest( Z, 3, operand ); break;
-		case BIT_4: copyOperand = false; BitTest( Z, 4, operand ); break;
-		case BIT_5: copyOperand = false; BitTest( Z, 5, operand ); break;
-		case BIT_6: copyOperand = false; BitTest( Z, 6, operand ); break;
-		case BIT_7: copyOperand = false; BitTest( Z, 7, operand ); break;
+		case BIT_0: copyOperand = false; BitTest( Z, 0, operand, flagMask ); break;
+		case BIT_1: copyOperand = false; BitTest( Z, 1, operand, flagMask ); break;
+		case BIT_2: copyOperand = false; BitTest( Z, 2, operand, flagMask ); break;
+		case BIT_3: copyOperand = false; BitTest( Z, 3, operand, flagMask ); break;
+		case BIT_4: copyOperand = false; BitTest( Z, 4, operand, flagMask ); break;
+		case BIT_5: copyOperand = false; BitTest( Z, 5, operand, flagMask ); break;
+		case BIT_6: copyOperand = false; BitTest( Z, 6, operand, flagMask ); break;
+		case BIT_7: copyOperand = false; BitTest( Z, 7, operand, flagMask ); break;
 
 		case RES_0: operand &= ~( 1 << 0 ); break;
 		case RES_1: operand &= ~( 1 << 1 ); break;
@@ -758,6 +824,12 @@ void ExecED( ZState *Z )
 		case LDI: Ldi( Z ); break;
 		case LDIR: if( !Ldi( Z ) ) Z->reg.PC -= 2; break;
 
+		case CPD: Cpd( Z ); break;
+		case CPDR: if( !Cpd( Z ) ) Z->reg.PC -= 2; break;
+		case CPI: Cpi( Z ); break;
+		case CPIR: if( !Cpi( Z ) ) Z->reg.PC -= 2; break;
+
+
 		case ADC_HL_BC: AdcToIndex( Z, Z->reg.B, Z->reg.C ); break;
 		case ADC_HL_DE: AdcToIndex( Z, Z->reg.D, Z->reg.E ); break;
 		case ADC_HL_HL: AdcToIndex( Z, Z->reg.H, Z->reg.L ); break;
@@ -797,6 +869,12 @@ void ExecED( ZState *Z )
 			SetZeroSignParity( Z, Z->reg.A );
 			break;
 
+		case LD_A_R:
+			Z->reg.A = 0;
+			SetZeroSignParity( Z, Z->reg.A );
+			SetF35( Z, Z->reg.A );
+			break;
+
 
 		default:
 			printf( "Unimplemented ED opcode 0x%02x: %s\n", op, g_edNames[op] );
@@ -824,7 +902,7 @@ void Exec( ZState *Z )
 	switch( op )
 	{
 		case NOP: break;
-		case HALT: Z->reg.PC -= 1; break;
+		case HALT: Z->halted = true; break;
 		case DI: Z->IFF0 = 0; break;
 		case EI: Z->IFF0 = 1; break;
 
@@ -955,8 +1033,16 @@ void Exec( ZState *Z )
 
 		case DAA:
 			if( ( Z->reg.A & 0x0f ) > 0x09 || ( ( Z->reg.F & M_H ) != 0 ) )
+			{
 				Z->reg.A += 0x06;
-			if( ( Z->reg.A & 0xf0 ) > 0x90 || ( ( Z->reg.F & M_C ) != 0 ) )
+				Z->reg.F |= M_H;
+			}
+			else
+			{
+				Z->reg.F &= ~M_H;
+			}
+
+			if( Z->reg.A > 0x90 || ( ( Z->reg.F & M_C ) != 0 ) )
 			{
 				Z->reg.A += 0x60;
 				Z->reg.F |= M_C;
@@ -969,12 +1055,23 @@ void Exec( ZState *Z )
 			SetF35( Z, Z->reg.A );
 			break;
 
-		case CPL: Z->reg.A = ~Z->reg.A; Z->reg.F |= ( M_N | M_H ); break;
-		case SCF: Z->reg.F |= M_C; Z->reg.F &= ~( M_N | M_H ); break;
+		case CPL:
+			Z->reg.A = ~Z->reg.A;
+			Z->reg.F |= ( M_N | M_H );
+			SetF35( Z, Z->reg.A );
+			break;
+
+		case SCF:
+			Z->reg.F |= M_C;
+			Z->reg.F &= ~( M_N | M_H );
+			SetF35( Z, Z->reg.A );
+			break;
+
 		case CCF:
 			Z->reg.F &= ~( M_H | M_N );
 			Z->reg.F |= ( ( Z->reg.F >> F_C ) & 1 ) << F_H;
 			Z->reg.F ^= M_C;
+			SetF35( Z, Z->reg.A );
 			break;
 
 		case ADD_HL_BC: AddToIndex( Z, Z->reg.B, Z->reg.C ); break;
@@ -1225,6 +1322,7 @@ void Z80_Run( ZState *Z, int cycles )
 		Z->NMI = 0;
 		Push16( Z, Z->reg.PC );
 		Z->reg.PC = 0x0066;
+		Z->halted = false;
 	}
 	else if( Z->INT && Z->IFF0 )
 	{
@@ -1239,6 +1337,7 @@ void Z80_Run( ZState *Z, int cycles )
 		{
 			Z->reg.PC = Z->reg.I << 8;
 		}
+		Z->halted = false;
 	}
 
 	while( !Z->halted && ( cycles < 0 || cycles > cycleCount ) )

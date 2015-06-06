@@ -98,8 +98,8 @@ int main( int argc, char *argv[] )
 
 	Z80_Reset( &Z );
 
-//	ReadSNA( &Z, "roms/jetpac.sna", ram );
-//	Z80_SnapshotResume( &Z );
+	ReadSNA( &Z, "roms/jetpac.sna", ram );
+	Z80_SnapshotResume( &Z );
 
 	memset( &s_keyState, 0xff, sizeof( s_keyState ) );
 
