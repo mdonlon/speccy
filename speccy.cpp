@@ -65,6 +65,7 @@ int main( int argc, char *argv[] )
 	uint8_t rom[16 * 1024];
 	uint8_t ram[48 * 1024];
 
+	printf( "Reading rom.\n" );
 	FILE *fp = fopen( "roms/48.rom", "rb" );
 	if( fp == NULL )
 	{
@@ -98,8 +99,12 @@ int main( int argc, char *argv[] )
 
 	Z80_Reset( &Z );
 
-	ReadSNA( &Z, "roms/jetpac.sna", ram );
-	Z80_SnapshotResume( &Z );
+	if( argc == 2 )
+	{
+		printf( "Loading snapshot: %s\n", argv[1] );
+		ReadSNA( &Z, argv[1], ram );
+		Z80_SnapshotResume( &Z );
+	}
 
 	memset( &s_keyState, 0xff, sizeof( s_keyState ) );
 

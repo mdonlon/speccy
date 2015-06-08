@@ -127,6 +127,8 @@ struct ZState
 	IndexRegister idx;
 	Register *rIdx;
 
+	int cycles;
+
 	bool halted;
 
 	int peripheralCount;

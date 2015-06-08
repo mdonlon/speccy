@@ -126,6 +126,7 @@ void ReadDisp( ZState *Z )
 {
 	if( Z->idx == R_HL )
 		return;
+	Z->cycles -= 8;
 	Z->disp = (int8_t)ReadPC8( Z );
 }
 
@@ -426,6 +427,7 @@ void Jump( ZState *Z, uint8_t cond )
 	uint16_t addr = ReadPC16( Z );
 	if( cond != 0 )
 	{
+		Z->cycles -= 9;
 		Z->reg.PC = addr;
 	}
 }
@@ -435,6 +437,7 @@ void Call( ZState *Z, uint8_t cond )
 	uint16_t addr = ReadPC16( Z );
 	if( cond != 0 )
 	{
+		Z->cycles -= 16;
 		Push16( Z, Z->reg.PC );
 		Z->reg.PC = addr;
 	}
@@ -444,6 +447,7 @@ void Return( ZState *Z, uint8_t cond )
 {
 	if( cond != 0 )
 	{
+		Z->cycles -= 6;
 		uint16_t addr = Pop16( Z );
 		Z->reg.PC = addr;
 	}
@@ -455,6 +459,7 @@ void JumpRelative( ZState *Z, uint8_t cond )
 	int8_t addr = (int8_t)ReadPC8( Z );
 	if( cond != 0 )
 	{
+		Z->cycles -= 5; // 12 cycles total, 7 from opcode, 5 from branch
 		Z->reg.PC = Z->reg.PC + addr;
 	}
 }
@@ -638,6 +643,8 @@ void ExecCB( ZState *Z )
 
 	ASM_PRINT( "CB %s\n", g_cbNames[op] );
 
+	Z->cycles -= g_cbCycleCount[op];
+
 	if( Z->idx != R_HL )
 	{
 		operand = ReadIndex( Z );
@@ -655,7 +662,11 @@ void ExecCB( ZState *Z )
 			case OP_REG_E: operand = Z->reg.E; break;
 			case OP_REG_H: operand = Z->reg.H; break;
 			case OP_REG_L: operand = Z->reg.L; break;
-			case OP_REG_INDEX: flagMask = M_S; operand = ReadIndex( Z ); break;
+			case OP_REG_INDEX:
+				Z->cycles -= 7;
+				flagMask = M_S;
+				operand = ReadIndex( Z );
+				break;
 			case OP_REG_A: operand = Z->reg.A; break;
 		};
 		copyOperand = true;
@@ -742,14 +753,15 @@ void ExecCB( ZState *Z )
 			SetF35( Z, operand );
 			break;
 
-		case BIT_0: copyOperand = false; BitTest( Z, 0, operand, flagMask ); break;
-		case BIT_1: copyOperand = false; BitTest( Z, 1, operand, flagMask ); break;
-		case BIT_2: copyOperand = false; BitTest( Z, 2, operand, flagMask ); break;
-		case BIT_3: copyOperand = false; BitTest( Z, 3, operand, flagMask ); break;
-		case BIT_4: copyOperand = false; BitTest( Z, 4, operand, flagMask ); break;
-		case BIT_5: copyOperand = false; BitTest( Z, 5, operand, flagMask ); break;
-		case BIT_6: copyOperand = false; BitTest( Z, 6, operand, flagMask ); break;
-		case BIT_7: copyOperand = false; BitTest( Z, 7, operand, flagMask ); break;
+#define BIT_TEST(x) Z->cycles += 3; copyOperand = false; BitTest( Z, (x), operand, flagMask )
+		case BIT_0: BIT_TEST( 0 ); break;
+		case BIT_1: BIT_TEST( 1 ); break;
+		case BIT_2: BIT_TEST( 2 ); break;
+		case BIT_3: BIT_TEST( 3 ); break;
+		case BIT_4: BIT_TEST( 4 ); break;
+		case BIT_5: BIT_TEST( 5 ); break;
+		case BIT_6: BIT_TEST( 6 ); break;
+		case BIT_7: BIT_TEST( 7 ); break;
 
 		case RES_0: operand &= ~( 1 << 0 ); break;
 		case RES_1: operand &= ~( 1 << 1 ); break;
@@ -801,6 +813,8 @@ void ExecED( ZState *Z )
 	uint8_t tempu8;
 	
 	ASM_PRINT( "ED %s\n", g_edNames[op] );
+	
+	Z->cycles -= g_edCycleCount[op];
 
 	switch( op )
 	{
@@ -898,6 +912,8 @@ void Exec( ZState *Z )
 	uint8_t op = ReadPC8( Z );
 	
 	ASM_PRINT( "%s\n", g_basicNames[op] );
+
+	Z->cycles -= g_basicCycleCount[op];
 
 	switch( op )
 	{
@@ -1314,7 +1330,6 @@ void Z80_SnapshotResume( ZState *Z )
 
 void Z80_Run( ZState *Z, int cycles )
 {
-	int cycleCount = 0;
 	if( Z->NMI )
 	{
 		Z->IFF1 = Z->IFF0;
@@ -1340,11 +1355,15 @@ void Z80_Run( ZState *Z, int cycles )
 		Z->halted = false;
 	}
 
-	while( !Z->halted && ( cycles < 0 || cycles > cycleCount ) )
+	Z->cycles += cycles;
+
+	while( !Z->halted && Z->cycles > 0 )
 	{
 		SetIndexRegister( Z, R_HL );
 		Exec( Z );
-		cycleCount++;
 	}
+
+	if( Z->halted )
+		Z->cycles = 0;
 }
 
