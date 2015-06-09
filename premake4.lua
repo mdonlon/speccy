@@ -13,27 +13,31 @@ solution "Speccy"
 		libdirs { "/usr/local/lib/" }
 		links { "SDL2" }
 
-		
 		configuration "Debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }
+			targetdir "debug/"
 
 		configuration "Release"
 			defines {}
 			flags { "Symbols", "Optimize" }
+			targetdir "release/"
+
 
 	project "Zexall"
 		kind "ConsoleApp"
 		language "C++"
 		files { z80_files, "zexall.cpp" }
 
-		
 		configuration "Debug"
 			defines { "DEBUG" }
 			flags { "Symbols" }
+			targetdir "debug/"
 
 		configuration "Release"
 			defines {}
 			flags { "Symbols", "Optimize" }
+			targetdir "release/"
+
 
 
